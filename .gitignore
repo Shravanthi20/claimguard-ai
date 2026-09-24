@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+.next/
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ML artifacts
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+*.onnx
+
+# AWS
+.aws/
+cdk.out/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+
+# Temporary files
+tmp/
+temp/
