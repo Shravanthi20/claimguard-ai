@@ -1,23 +1,54 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
+import dotenv from "dotenv";
+import healthRoutes from "./routes/health";
+import authRoutes from "./routes/auth";
 import claimRoutes from "./routes/claims";
+import investigatorRoutes from "./routes/investigator";
+import adminRoutes from "./routes/admin";
+
+dotenv.config();
 
 const app = express();
 
+// Security and middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 
-app.get("/api/health", (_req, res) => {
-  res.json({
-    status: "ok",
-    service: "ClaimGuard AI backend",
+// Route registrations
+app.use("/api/health", healthRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/claims", claimRoutes);
+app.use("/api/investigator", investigatorRoutes);
+app.use("/api/admin", adminRoutes);
+
+// Global 404 handler
+app.use((_req: Request, res: Response) => {
+  res.status(404).json({
+    error: "NOT_FOUND",
+    message: "Requested API endpoint does not exist.",
   });
 });
 
-app.use("/api/claims", claimRoutes);
+// Global error handler
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("Unhandled API Error:", err);
+  const status = err.code === "LIMIT_FILE_SIZE" ? 413 : Number(err.status) || 500;
+  res.status(status).json({
+    error: status === 413 ? "PAYLOAD_TOO_LARGE" : "INTERNAL_SERVER_ERROR",
+    message: status === 413
+      ? "The uploaded file exceeds the 15 MB size limit."
+      : "An unexpected error occurred. Please try again later.",
+  });
+});
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Backend running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`[ClaimGuard AI] Backend API server running on port ${PORT}`);
+  });
+}
+
+export default app;

@@ -1,122 +1,163 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import React from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { Navbar } from "./components/Navbar";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 
-function App() {
-  const [count, setCount] = useState(0)
+// Auth Pages
+import { LoginPage } from "./pages/auth/LoginPage";
+import { RegisterPage } from "./pages/auth/RegisterPage";
 
+// Customer Pages
+import { CustomerDashboard } from "./pages/customer/CustomerDashboard";
+import { CustomerClaimsList } from "./pages/customer/CustomerClaimsList";
+import { CustomerNewClaim } from "./pages/customer/CustomerNewClaim";
+import { CustomerClaimDetail } from "./pages/customer/CustomerClaimDetail";
+
+// Investigator Pages
+import { InvestigatorDashboard } from "./pages/investigator/InvestigatorDashboard";
+import { InvestigatorClaimsList } from "./pages/investigator/InvestigatorClaimsList";
+import { InvestigatorClaimDetail } from "./pages/investigator/InvestigatorClaimDetail";
+
+// Admin Pages
+import { AdminDashboard } from "./pages/admin/AdminDashboard";
+import { AdminClaimDetail } from "./pages/admin/AdminClaimDetail";
+
+// 404
+import { NotFoundPage } from "./pages/NotFoundPage";
+
+const RootRedirect: React.FC = () => {
+  const { user, isAuthenticated, loading, role } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="loading-screen">
+        <div className="spinner"></div>
+        <p style={{ color: "var(--text-secondary)" }}>Initializing ClaimGuard AI...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (role === "admin") return <Navigate to="/admin/dashboard" replace />;
+  if (role === "investigator") return <Navigate to="/investigator/dashboard" replace />;
+  return <Navigate to="/customer/dashboard" replace />;
+};
+
+export const AppContent: React.FC = () => {
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app-container">
+      <Navbar />
+      <Routes>
+        {/* Root Redirect */}
+        <Route path="/" element={<RootRedirect />} />
 
-      <div className="ticks"></div>
+        {/* Public Authentication Routes */}
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+        {/* Protected Customer Routes */}
+        <Route
+          path="/customer/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["customer"]}>
+              <CustomerDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/customer/claims"
+          element={
+            <ProtectedRoute allowedRoles={["customer"]}>
+              <CustomerClaimsList />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/customer/claims/new"
+          element={
+            <ProtectedRoute allowedRoles={["customer"]}>
+              <CustomerNewClaim />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/customer/claims/:claimId"
+          element={
+            <ProtectedRoute allowedRoles={["customer"]}>
+              <CustomerClaimDetail />
+            </ProtectedRoute>
+          }
+        />
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+        {/* Protected Investigator Routes */}
+        <Route
+          path="/investigator/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["investigator"]}>
+              <InvestigatorDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/investigator/claims"
+          element={
+            <ProtectedRoute allowedRoles={["investigator"]}>
+              <InvestigatorClaimsList />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/investigator/claims/:claimId"
+          element={
+            <ProtectedRoute allowedRoles={["investigator"]}>
+              <InvestigatorClaimDetail />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Protected Administrator Routes */}
+        <Route
+          path="/admin/dashboard"
+          element={
+            <ProtectedRoute allowedRoles={["admin"]}>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/claims"
+          element={
+            <ProtectedRoute allowedRoles={["admin"]}>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/claims/:claimId"
+          element={
+            <ProtectedRoute allowedRoles={["admin"]}>
+              <AdminClaimDetail />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* 404 Route */}
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </div>
+  );
+};
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </BrowserRouter>
+  );
 }
-
-export default App

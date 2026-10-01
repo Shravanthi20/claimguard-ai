@@ -36,6 +36,9 @@ env/
 .aws/
 cdk.out/
 
+# Local uploaded evidence
+backend/uploads/
+
 # Logs
 *.log
 logs/
