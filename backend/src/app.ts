@@ -7,6 +7,7 @@ import healthRoutes from "./routes/health";
 import authRoutes from "./routes/auth";
 import claimRoutes from "./routes/claims";
 import investigationRoutes from "./routes/investigations";
+import investigatorRoutes from "./routes/investigator";
 import riskRoutes from "./routes/risk";
 import adminRoutes from "./routes/admin";
 
@@ -28,6 +29,7 @@ app.use("/api/health", healthRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/claims", claimRoutes);
 app.use("/api/investigations", investigationRoutes);
+app.use("/api/investigator", investigatorRoutes);
 app.use("/api", riskRoutes);
 app.use("/api/admin", adminRoutes);
 

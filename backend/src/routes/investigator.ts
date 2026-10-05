@@ -1,39 +1,72 @@
 import { Router, Request, Response } from "express";
+import { prisma } from "../config/db";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
-import { listClaims, getClaimStatistics } from "../services/claimService";
 
 const router = Router();
 
-// Investigator-only routes
+// Apply auth & role guard to all investigator routes
 router.use(authenticateToken);
-router.use(requireRole("investigator", "admin"));
+router.use(requireRole("INVESTIGATOR", "ADMIN"));
 
-// GET /api/investigator/claims - List claims assigned or open for review
-router.get("/claims", async (req: Request, res: Response) => {
+// GET /api/investigator/claims — List claims assigned to this investigator
+router.get("/claims", async (req: Request, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const claims = await listClaims({
-      investigatorId: user.userId,
+
+    const claims = await prisma.claim.findMany({
+      where: { investigatorId: user.id },
+      include: {
+        customer: { select: { id: true, name: true, email: true } },
+        riskAssessment: true,
+        investigation: true,
+        evidence: true,
+      },
+      orderBy: { createdAt: "desc" },
     });
-    res.json(claims);
+
+    res.json({ claims, count: claims.length });
   } catch (error: any) {
     console.error("Investigator claims error:", error);
-    res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to retrieve investigator claims." });
+    res.status(500).json({ error: "SERVER_ERROR", message: "Failed to retrieve investigator claims." });
   }
 });
 
-// GET /api/investigator/statistics
-router.get("/statistics", async (req: Request, res: Response) => {
+// GET /api/investigator/statistics — Stats for this investigator
+router.get("/statistics", async (req: Request, res: Response): Promise<void> => {
   try {
     const user = req.user!;
-    const stats = await getClaimStatistics({
-      investigatorId: user.userId,
-      role: "investigator",
+
+    const [totalAssigned, pendingCount, inProgressCount, completedCount, highRiskCount] =
+      await Promise.all([
+        prisma.investigation.count({ where: { investigatorId: user.id } }),
+        prisma.investigation.count({ where: { investigatorId: user.id, status: "PENDING" } }),
+        prisma.investigation.count({ where: { investigatorId: user.id, status: "IN_PROGRESS" } }),
+        prisma.investigation.count({
+          where: {
+            investigatorId: user.id,
+            status: { in: ["COMPLETED", "APPROVED", "REJECTED"] },
+          },
+        }),
+        prisma.riskAssessment.count({
+          where: {
+            riskLevel: { in: ["HIGH", "CRITICAL"] },
+            claim: { investigatorId: user.id },
+          },
+        }),
+      ]);
+
+    res.json({
+      statistics: {
+        totalAssigned,
+        pendingInvestigations: pendingCount,
+        inProgress: inProgressCount,
+        completed: completedCount,
+        highRiskClaims: highRiskCount,
+      },
     });
-    res.json(stats);
   } catch (error: any) {
     console.error("Investigator statistics error:", error);
-    res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to retrieve statistics." });
+    res.status(500).json({ error: "SERVER_ERROR", message: "Failed to retrieve statistics." });
   }
 });
 
