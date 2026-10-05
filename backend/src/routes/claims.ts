@@ -1,559 +1,427 @@
 import { Router, Request, Response } from "express";
-import multer from "multer";
-import crypto from "crypto";
-import {
-  createClaim,
-  getClaim,
-  listClaims,
-  updateClaimStatus,
-  updateInvestigationStatus,
-  addInvestigationRemark,
-  addClaimEvidence,
-  getClaimStatistics,
-} from "../services/claimService";
-import {
-  authenticateToken,
-  canAccessClaim,
-  requireRole,
-} from "../middleware/authMiddleware";
-import {
-  uploadFileToS3,
-  getPresignedViewUrl,
-  getLocalFilePath,
-} from "../services/s3Service";
-import {
-  getClaimAIResult,
-  ingestAIResult,
-} from "../services/aiService";
-import { Claim, ClaimStatus, InvestigationStatus } from "../models/types";
-import { isLocalDataMode } from "../config/aws";
+import { prisma } from "../config/db";
+import { authenticateToken, requireRole } from "../middleware/authMiddleware";
+import { upload } from "../middleware/uploadMiddleware";
+import { calculateInitialRiskAssessment } from "../services/riskEngine";
 
 const router = Router();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 15 * 1024 * 1024, // 15MB maximum
-  },
-});
 
-const paramStr = (val: string | string[] | undefined): string =>
-  Array.isArray(val) ? val[0] : val || "";
+// Helper to generate claim number
+function generateClaimNumber(): string {
+  const year = new Date().getFullYear();
+  const randomStr = Math.floor(100000 + Math.random() * 900000);
+  return `CLM-${year}-${randomStr}`;
+}
 
-const claimStatuses: ClaimStatus[] = [
-  "SUBMITTED",
-  "PROCESSING",
-  "AI_ANALYSIS",
-  "UNDER_INVESTIGATION",
-  "REVIEW",
-  "COMPLETED",
-  "FAILED",
-];
-
-const investigationStatuses: InvestigationStatus[] = [
-  "ASSIGNED",
-  "UNDER_REVIEW",
-  "ADDITIONAL_INFORMATION_REQUIRED",
-  "INVESTIGATION_COMPLETED",
-  "ESCALATED",
-];
-
-const allowedEvidenceTypes = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-]);
-
-const authenticateAIIngest = (req: Request, res: Response, next: () => void): void => {
-  const expectedToken = process.env.AI_RESULT_INGEST_TOKEN;
-  if (!expectedToken) {
-    res.status(503).json({ error: "INTEGRATION_UNAVAILABLE", message: "AI result integration is not configured." });
-    return;
-  }
-
-  const suppliedToken = req.header("x-ai-ingest-token") || "";
-  const expected = Buffer.from(expectedToken);
-  const supplied = Buffer.from(suppliedToken);
-  if (expected.length !== supplied.length || !crypto.timingSafeEqual(expected, supplied)) {
-    res.status(401).json({ error: "UNAUTHORIZED", message: "AI result integration authentication failed." });
-    return;
-  }
-  next();
-};
-
-// GET /api/claims/statistics - Real-time database metrics
-router.get("/statistics", authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const filter =
-      user.role === "customer"
-        ? { customerId: user.userId, role: user.role }
-        : user.role === "investigator"
-        ? { investigatorId: user.userId, role: user.role }
-        : { role: user.role };
-
-    const stats = await getClaimStatistics(filter);
-    res.json(stats);
-  } catch (error: any) {
-    console.error("Statistics error:", error);
-    res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to retrieve claim statistics." });
-  }
-});
-
-// GET /api/claims/evidence/file/:s3Key - Local dev file viewing endpoint
-router.get("/evidence/file/:s3Key", authenticateToken, async (req: Request, res: Response) => {
-  if (!isLocalDataMode) {
-    res.status(404).json({ error: "NOT_FOUND", message: "Evidence file not found." });
-    return;
-  }
-
-  const s3Key = paramStr(req.params.s3Key);
-  const claimId = s3Key.match(/^claims\/([^/]+)\/(?:documents|images)\/[^/]+$/)?.[1];
-  if (!claimId) {
-    res.status(404).json({ error: "NOT_FOUND", message: "Evidence file not found." });
-    return;
-  }
-
-  const claim = await getClaim(claimId);
-  if (!claim || !canAccessClaim(req.user!, claim)) {
-    res.status(404).json({ error: "NOT_FOUND", message: "Evidence file not found." });
-    return;
-  }
-  const referencedFile = [...(claim.documents || []), ...(claim.images || [])]
-    .some((file) => file.s3Key === s3Key);
-  if (!referencedFile) {
-    res.status(404).json({ error: "NOT_FOUND", message: "Evidence file not found." });
-    return;
-  }
-
-  const filePath = getLocalFilePath(s3Key);
-  if (!filePath) {
-    res.status(404).json({ error: "NOT_FOUND", message: "Evidence file not found." });
-    return;
-  }
-  res.sendFile(filePath);
-});
-
-// GET /api/claims - List claims filtered by authenticated user role
-router.get("/", authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const { status, claimType } = req.query;
-
-    let claims: Claim[];
-
-    if (user.role === "customer") {
-      claims = await listClaims({
-        customerId: user.userId,
-        status: status as ClaimStatus,
-        claimType: claimType as string,
-      });
-    } else if (user.role === "investigator") {
-      claims = await listClaims({
-        investigatorId: user.userId,
-        status: status as ClaimStatus,
-        claimType: claimType as string,
-      });
-    } else {
-      // Admin sees all claims
-      claims = await listClaims({
-        status: status as ClaimStatus,
-        claimType: claimType as string,
-      });
-    }
-
-    res.json(claims);
-  } catch (error: any) {
-    console.error("List claims error:", error);
-    res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to list claims." });
-  }
-});
-
-// POST /api/claims - Create claim with authenticated customer identity
-router.post("/", authenticateToken, requireRole("customer"), async (req: Request, res: Response) => {
-  try {
-    const user = req.user!;
-    const {
-      policyNumber,
-      incidentDate,
-      claimType,
-      accidentDescription,
-      description,
-      claimedAmount,
-    } = req.body;
-
-    const desc = accidentDescription || description;
-
-    // Strict validation
-    if (!policyNumber || !incidentDate || !claimType || !desc || claimedAmount === undefined) {
-      res.status(400).json({
-        error: "VALIDATION_ERROR",
-        message: "Policy number, incident date, claim type, accident description, and claimed amount are required.",
-      });
-      return;
-    }
-
-    const normalizedPolicyNumber = String(policyNumber).trim();
-    if (normalizedPolicyNumber.length < 4 || normalizedPolicyNumber.length > 64) {
-      res.status(400).json({ error: "VALIDATION_ERROR", message: "Policy number must be between 4 and 64 characters." });
-      return;
-    }
-
-    const parsedIncidentDate = new Date(`${incidentDate}T00:00:00.000Z`);
-    const validIncidentDate =
-      /^\d{4}-\d{2}-\d{2}$/.test(String(incidentDate)) &&
-      !Number.isNaN(parsedIncidentDate.getTime()) &&
-      parsedIncidentDate.toISOString().slice(0, 10) === incidentDate &&
-      String(incidentDate) <= new Date().toISOString().slice(0, 10);
-    if (!validIncidentDate) {
-      res.status(400).json({ error: "VALIDATION_ERROR", message: "Incident date must be a valid date that is not in the future." });
-      return;
-    }
-
-    const allowedClaimTypes = ["Vehicle Accident", "Property Damage", "Theft", "Bodily Injury", "Natural Disaster", "Other"];
-    if (!allowedClaimTypes.includes(String(claimType))) {
-      res.status(400).json({ error: "VALIDATION_ERROR", message: "Claim type is not supported." });
-      return;
-    }
-
-    const normalizedDescription = String(desc).trim();
-    if (normalizedDescription.length < 20 || normalizedDescription.length > 5000) {
-      res.status(400).json({ error: "VALIDATION_ERROR", message: "Description must be between 20 and 5000 characters." });
-      return;
-    }
-
-    const numAmount = Number(claimedAmount);
-    if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      res.status(400).json({
-        error: "VALIDATION_ERROR",
-        message: "Claimed amount must be a positive number.",
-      });
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const claimId = `CLM-${crypto.randomUUID().toUpperCase()}`;
-
-    const newClaim: Claim = {
-      claimId,
-      customerId: user.userId,
-      userId: user.userId, // Backward compatibility alias
-      policyNumber: normalizedPolicyNumber,
-      incidentDate: String(incidentDate).trim(),
-      claimType: String(claimType).trim(),
-      accidentDescription: normalizedDescription,
-      description: normalizedDescription,
-      claimedAmount: numAmount,
-      status: "SUBMITTED",
-      investigationStatus: "UNASSIGNED",
-      investigatorId: null,
-      documents: [],
-      images: [],
-      aiResult: null,
-      investigationRemarks: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const savedClaim = await createClaim(newClaim);
-    res.status(201).json(savedClaim);
-  } catch (error: any) {
-    console.error("Create claim error:", error);
-    res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to create claim." });
-  }
-});
-
-// GET /api/claims/:claimId - Retrieve single claim with authorization check
-router.get("/:claimId", authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const claimId = paramStr(req.params.claimId);
-    const claim = await getClaim(claimId);
-
-    if (!claim) {
-      res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
-      return;
-    }
-
-    // Security: Check customer ownership or investigator/admin authorization
-    if (!canAccessClaim(req.user!, claim)) {
-      res.status(403).json({
-        error: "FORBIDDEN",
-        message: "You are not authorized to view this claim.",
-      });
-      return;
-    }
-
-    // Attach signed URLs for evidence preview
-    const docsWithUrls = await Promise.all(
-      (claim.documents || []).map(async (doc) => ({
-        ...doc,
-        url: await getPresignedViewUrl(doc.s3Key),
-      }))
-    );
-
-    const imagesWithUrls = await Promise.all(
-      (claim.images || []).map(async (img) => ({
-        ...img,
-        url: await getPresignedViewUrl(img.s3Key),
-      }))
-    );
-
-    res.json({
-      ...claim,
-      documents: docsWithUrls,
-      images: imagesWithUrls,
-    });
-  } catch (error: any) {
-    console.error("Get claim error:", error);
-    res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to retrieve claim." });
-  }
-});
-
-// PATCH /api/claims/:claimId/status - Update claim status
-router.patch(
-  "/:claimId/status",
-  authenticateToken,
-  requireRole("investigator", "admin"),
-  async (req: Request, res: Response) => {
-    try {
-      const claimId = paramStr(req.params.claimId);
-      const { status } = req.body;
-
-      if (!status) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "Status is required." });
-        return;
-      }
-
-      if (!claimStatuses.includes(status as ClaimStatus)) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "Claim status is not supported." });
-        return;
-      }
-
-      const claim = await getClaim(claimId);
-      if (!claim) {
-        res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
-        return;
-      }
-      if (!canAccessClaim(req.user!, claim)) {
-        res.status(403).json({ error: "FORBIDDEN", message: "You are not authorized to update this claim." });
-        return;
-      }
-
-      const updated = await updateClaimStatus(claimId, status as ClaimStatus);
-      if (!updated) {
-        res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
-        return;
-      }
-
-      res.json(updated);
-    } catch (error: any) {
-      console.error("Update claim status error:", error);
-      res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to update claim status." });
-    }
-  }
-);
-
-// GET /api/claims/:claimId/ai-result - Retrieve AI result for claim
-router.get("/:claimId/ai-result", authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const claimId = paramStr(req.params.claimId);
-    const claim = await getClaim(claimId);
-
-    if (!claim) {
-      res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
-      return;
-    }
-
-    if (!canAccessClaim(req.user!, claim)) {
-      res.status(403).json({ error: "FORBIDDEN", message: "Not authorized to access this claim's AI results." });
-      return;
-    }
-
-    const aiResultResponse = await getClaimAIResult(claimId);
-    res.json(aiResultResponse);
-  } catch (error: any) {
-    console.error("Get AI result error:", error);
-    res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to retrieve AI result." });
-  }
-});
-
-// POST /api/claims/:claimId/ai-result - Ingest AI result (for Person 2 integration or Lambda)
+// POST /api/claims - Submit a new claim
 router.post(
-  "/:claimId/ai-result",
-  authenticateAIIngest,
-  async (req: Request, res: Response) => {
-    try {
-      const claimId = paramStr(req.params.claimId);
-      const updatedClaim = await ingestAIResult(claimId, req.body);
-      res.json(updatedClaim);
-    } catch (error: any) {
-      console.error("Ingest AI result error:", error);
-      res.status(400).json({ error: "VALIDATION_ERROR", message: "AI result was invalid or could not be associated with this claim." });
-    }
-  }
-);
-
-// POST /api/claims/:claimId/evidence - Upload supporting document or photo
-router.post(
-  "/:claimId/evidence",
+  "/",
   authenticateToken,
-  requireRole("customer"),
-  upload.single("file"),
-  async (req: Request, res: Response) => {
+  upload.array("files", 10),
+  async (req: Request, res: Response): Promise<void> => {
     try {
-      const claimId = paramStr(req.params.claimId);
-      const claim = await getClaim(claimId);
-
-      if (!claim) {
-        res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
+      if (!req.user) {
+        res.status(401).json({ error: "UNAUTHORIZED", message: "Not authenticated" });
         return;
       }
 
-      if (!canAccessClaim(req.user!, claim)) {
-        res.status(403).json({ error: "FORBIDDEN", message: "Not authorized to upload evidence for this claim." });
+      const {
+        policyNumber,
+        policyId: inputPolicyId,
+        claimType,
+        incidentDate,
+        incidentLocation,
+        claimAmount,
+        description,
+      } = req.body;
+
+      if (!claimType || !incidentDate || !incidentLocation || !claimAmount || !description) {
+        res.status(400).json({
+          error: "VALIDATION_ERROR",
+          message: "Please fill in all required claim fields (claimType, incidentDate, incidentLocation, claimAmount, description).",
+        });
         return;
       }
 
-      const file = req.file;
-      if (!file) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "No file provided for upload." });
+      const parsedAmount = parseFloat(claimAmount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        res.status(400).json({
+          error: "VALIDATION_ERROR",
+          message: "Claim amount must be a positive number.",
+        });
         return;
       }
 
-      if (!allowedEvidenceTypes.has(file.mimetype)) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "This file type is not supported." });
-        return;
+      // Find or create matching policy
+      let policyId: string | null = inputPolicyId || null;
+
+      if (!policyId && policyNumber) {
+        const foundPolicy = await prisma.policy.findFirst({
+          where: { policyNumber: policyNumber.trim() },
+        });
+        if (foundPolicy) {
+          policyId = foundPolicy.id;
+        }
       }
-      if ([...(claim.documents || []), ...(claim.images || [])].length >= 20) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "A claim can contain no more than 20 evidence files." });
-        return;
+
+      if (!policyId) {
+        // Find existing user policy or create a default policy
+        let userPolicy = await prisma.policy.findFirst({
+          where: { userId: req.user.id },
+        });
+
+        if (!userPolicy) {
+          const randNum = Math.floor(100000 + Math.random() * 900000);
+          userPolicy = await prisma.policy.create({
+            data: {
+              policyNumber: policyNumber || `POL-${claimType.toUpperCase()}-${randNum}`,
+              userId: req.user.id,
+              policyType: `${claimType} Policy`,
+              status: "ACTIVE",
+              startDate: new Date(),
+              endDate: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+              coverageAmount: Math.max(parsedAmount * 2, 50000),
+            },
+          });
+        }
+        policyId = userPolicy.id;
       }
 
-      const isImage = file.mimetype.startsWith("image/");
-      const category: "document" | "image" = isImage ? "image" : "document";
+      const claimNum = generateClaimNumber();
+      const files = (req.files as Express.Multer.File[]) || [];
 
-      // Upload to S3 (or local fallback)
-      const evidence = await uploadFileToS3(
-        claimId,
-        file.originalname,
-        file.buffer,
-        file.mimetype,
-        category
-      );
+      // Create claim in DB
+      const claim = await prisma.claim.create({
+        data: {
+          claimNumber: claimNum,
+          customerId: req.user.id,
+          policyId,
+          claimType,
+          incidentDate: new Date(incidentDate),
+          incidentLocation,
+          claimAmount: parsedAmount,
+          description,
+          status: "SUBMITTED",
+        },
+      });
 
-      // Save reference to DynamoDB
-      const updatedClaim = await addClaimEvidence(claimId, evidence);
+      // Save evidence metadata if files were uploaded
+      if (files.length > 0) {
+        await prisma.evidence.createMany({
+          data: files.map((file) => ({
+            claimId: claim.id,
+            fileName: file.originalname,
+            filePath: `/uploads/${file.filename}`,
+            fileType: file.mimetype,
+            fileSize: file.size,
+            description: `Uploaded during claim submission`,
+          })),
+        });
+      }
 
-      // Add signed URL for immediate client preview
-      evidence.url = await getPresignedViewUrl(evidence.s3Key);
+      // Create Claim Event
+      await prisma.claimEvent.create({
+        data: {
+          claimId: claim.id,
+          eventType: "CLAIM_SUBMITTED",
+          description: `Claim ${claim.claimNumber} submitted by ${req.user.name}`,
+          createdBy: req.user.name,
+        },
+      });
+
+      // Calculate initial demo risk assessment
+      const riskCalc = calculateInitialRiskAssessment({
+        claimType,
+        claimAmount: parsedAmount,
+        description,
+        incidentDate: new Date(incidentDate),
+        evidenceCount: files.length,
+      });
+
+      // Save Risk Assessment
+      const riskAssessment = await prisma.riskAssessment.create({
+        data: {
+          claimId: claim.id,
+          riskScore: riskCalc.riskScore,
+          fraudProbability: riskCalc.fraudProbability,
+          riskLevel: riskCalc.riskLevel,
+          priority: riskCalc.priority,
+          riskFactors: riskCalc.riskFactors,
+          modelVersion: riskCalc.modelVersion,
+        },
+      });
+
+      // Create initial Investigation entry
+      const investigation = await prisma.investigation.create({
+        data: {
+          claimId: claim.id,
+          status: "PENDING",
+        },
+      });
+
+      // Fetch complete created claim object to return
+      const fullClaim = await prisma.claim.findUnique({
+        where: { id: claim.id },
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          policy: true,
+          evidence: true,
+          riskAssessment: true,
+          investigation: {
+            include: {
+              investigator: { select: { id: true, name: true, email: true } },
+              notes: {
+                include: { author: { select: { id: true, name: true } } },
+                orderBy: { createdAt: "desc" },
+              },
+            },
+          },
+          claimEvents: { orderBy: { createdAt: "asc" } },
+        },
+      });
 
       res.status(201).json({
-        evidence,
-        claim: updatedClaim,
+        message: "Claim submitted successfully",
+        claim: fullClaim,
       });
     } catch (error: any) {
-      console.error("Evidence upload error:", error);
-      res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to upload evidence." });
+      console.error("Create Claim Error:", error);
+      res.status(500).json({
+        error: "SERVER_ERROR",
+        message: "Failed to submit claim. Please check your inputs.",
+      });
     }
   }
 );
 
-// POST /api/claims/:claimId/remarks - Add investigator remarks
-router.post(
-  "/:claimId/remarks",
-  authenticateToken,
-  requireRole("investigator", "admin"),
-  async (req: Request, res: Response) => {
-    try {
-      const claimId = paramStr(req.params.claimId);
-      const { remark } = req.body;
-      const user = req.user!;
+// GET /api/claims - List claims with role filtering & search
+router.get("/", authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ error: "UNAUTHORIZED", message: "Not authenticated" });
+      return;
+    }
 
-      if (!remark || !String(remark).trim()) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "Remark text is required." });
-        return;
-      }
+    const { status, riskLevel, search, claimType } = req.query;
 
-      const claim = await getClaim(claimId);
-      if (!claim) {
-        res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
-        return;
-      }
+    const whereClause: any = {};
 
-      if (!canAccessClaim(user, claim)) {
-        res.status(403).json({ error: "FORBIDDEN", message: "Not authorized to remark on this claim." });
-        return;
-      }
+    // Role-based scoping
+    if (req.user.role === "CUSTOMER") {
+      whereClause.customerId = req.user.id;
+    }
 
-      const remarkItem = {
-        id: crypto.randomUUID(),
-        investigatorId: user.userId,
-        investigatorName: user.name,
-        remark: String(remark).trim(),
-        timestamp: new Date().toISOString(),
+    if (status && typeof status === "string") {
+      whereClause.status = status.toUpperCase();
+    }
+
+    if (claimType && typeof claimType === "string") {
+      whereClause.claimType = claimType;
+    }
+
+    if (search && typeof search === "string" && search.trim() !== "") {
+      const query = search.trim();
+      whereClause.OR = [
+        { claimNumber: { contains: query, mode: "insensitive" } },
+        { description: { contains: query, mode: "insensitive" } },
+        { incidentLocation: { contains: query, mode: "insensitive" } },
+        { customer: { name: { contains: query, mode: "insensitive" } } },
+      ];
+    }
+
+    if (riskLevel && typeof riskLevel === "string") {
+      whereClause.riskAssessment = {
+        riskLevel: riskLevel.toUpperCase(),
       };
+    }
 
-      const updatedClaim = await addInvestigationRemark(claimId, remarkItem);
-      res.status(201).json({
-        remark: remarkItem,
-        claim: updatedClaim,
+    const claims = await prisma.claim.findMany({
+      where: whereClause,
+      include: {
+        customer: { select: { id: true, name: true, email: true } },
+        investigator: { select: { id: true, name: true, email: true } },
+        policy: true,
+        evidence: true,
+        riskAssessment: true,
+        investigation: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json({ claims, count: claims.length });
+  } catch (error: any) {
+    console.error("List Claims Error:", error);
+    res.status(500).json({ error: "SERVER_ERROR", message: "Failed to fetch claims." });
+  }
+});
+
+// GET /api/claims/:id - Get claim details
+router.get("/:id", authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const claim = await prisma.claim.findFirst({
+      where: {
+        OR: [{ id: id }, { claimNumber: id }],
+      },
+      include: {
+        customer: { select: { id: true, name: true, email: true } },
+        investigator: { select: { id: true, name: true, email: true } },
+        policy: true,
+        evidence: true,
+        riskAssessment: true,
+        investigation: {
+          include: {
+            investigator: { select: { id: true, name: true, email: true } },
+            notes: {
+              include: { author: { select: { id: true, name: true } } },
+              orderBy: { createdAt: "desc" },
+            },
+          },
+        },
+        claimEvents: { orderBy: { createdAt: "asc" } },
+      },
+    });
+
+    if (!claim) {
+      res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
+      return;
+    }
+
+    // Role security check
+    if (req.user?.role === "CUSTOMER" && claim.customerId !== req.user.id) {
+      res.status(403).json({ error: "FORBIDDEN", message: "You do not have permission to view this claim." });
+      return;
+    }
+
+    res.json({ claim });
+  } catch (error: any) {
+    console.error("Get Claim Error:", error);
+    res.status(500).json({ error: "SERVER_ERROR", message: "Failed to retrieve claim." });
+  }
+});
+
+// PUT /api/claims/:id - Update claim status or investigator
+router.put(
+  "/:id",
+  authenticateToken,
+  requireRole("INVESTIGATOR", "ADMIN"),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const { status, investigatorId, description } = req.body;
+
+      const existingClaim = await prisma.claim.findUnique({ where: { id } });
+      if (!existingClaim) {
+        res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
+        return;
+      }
+
+      const updateData: any = {};
+      if (status) updateData.status = status;
+      if (investigatorId !== undefined) updateData.investigatorId = investigatorId;
+      if (description) updateData.description = description;
+
+      const updatedClaim = await prisma.claim.update({
+        where: { id },
+        data: updateData,
+        include: {
+          customer: { select: { id: true, name: true, email: true } },
+          investigator: { select: { id: true, name: true, email: true } },
+          riskAssessment: true,
+          investigation: true,
+        },
       });
+
+      // Add audit event
+      await prisma.claimEvent.create({
+        data: {
+          claimId: id,
+          eventType: "CLAIM_UPDATED",
+          description: `Claim status updated to ${status || existingClaim.status} by ${req.user?.name}`,
+          createdBy: req.user?.name,
+        },
+      });
+
+      res.json({ message: "Claim updated successfully", claim: updatedClaim });
     } catch (error: any) {
-      console.error("Add remark error:", error);
-      res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to add remark." });
+      console.error("Update Claim Error:", error);
+      res.status(500).json({ error: "SERVER_ERROR", message: "Failed to update claim." });
     }
   }
 );
 
-// PATCH /api/claims/:claimId/investigation-status - Update investigation status
-router.patch(
-  "/:claimId/investigation-status",
+// POST /api/claims/:id/evidence - Upload evidence files to existing claim
+router.post(
+  "/:id/evidence",
   authenticateToken,
-  requireRole("investigator", "admin"),
-  async (req: Request, res: Response) => {
+  upload.array("files", 10),
+  async (req: Request, res: Response): Promise<void> => {
     try {
-      const claimId = paramStr(req.params.claimId);
-      const { investigationStatus } = req.body;
-      const user = req.user!;
+      const { id } = req.params;
+      const { description } = req.body;
+      const files = (req.files as Express.Multer.File[]) || [];
 
-      if (!investigationStatus) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "Investigation status is required." });
-        return;
-      }
-      if (!investigationStatuses.includes(investigationStatus as InvestigationStatus)) {
-        res.status(400).json({ error: "VALIDATION_ERROR", message: "Investigation status is not supported." });
-        return;
-      }
-
-      const claim = await getClaim(claimId);
+      const claim = await prisma.claim.findUnique({ where: { id } });
       if (!claim) {
         res.status(404).json({ error: "NOT_FOUND", message: "Claim not found." });
         return;
       }
 
-      if (!canAccessClaim(user, claim)) {
-        res.status(403).json({ error: "FORBIDDEN", message: "Not authorized to update this claim's investigation." });
+      if (files.length === 0) {
+        res.status(400).json({ error: "VALIDATION_ERROR", message: "No files uploaded." });
         return;
       }
 
-      const assignedId = user.role === "investigator" ? user.userId : undefined;
-      const assignedName = user.role === "investigator" ? user.name : undefined;
-
-      const updated = await updateInvestigationStatus(
-        claimId,
-        investigationStatus as InvestigationStatus,
-        assignedId,
-        assignedName
+      const newEvidence = await Promise.all(
+        files.map((file) =>
+          prisma.evidence.create({
+            data: {
+              claimId: id,
+              fileName: file.originalname,
+              filePath: `/uploads/${file.filename}`,
+              fileType: file.mimetype,
+              fileSize: file.size,
+              description: description || "Additional supporting evidence",
+            },
+          })
+        )
       );
 
-      res.json(updated);
+      await prisma.claimEvent.create({
+        data: {
+          claimId: id,
+          eventType: "EVIDENCE_ADDED",
+          description: `${files.length} new evidence file(s) added by ${req.user?.name}`,
+          createdBy: req.user?.name,
+        },
+      });
+
+      res.status(201).json({
+        message: "Evidence files uploaded successfully",
+        evidence: newEvidence,
+      });
     } catch (error: any) {
-      console.error("Update investigation status error:", error);
-      res.status(500).json({ error: "INTERNAL_ERROR", message: "Failed to update investigation status." });
+      console.error("Upload Evidence Error:", error);
+      res.status(500).json({ error: "SERVER_ERROR", message: "Failed to upload evidence." });
     }
   }
 );
+
+// GET /api/claims/:id/evidence - Get claim evidence list
+router.get("/:id/evidence", authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const evidence = await prisma.evidence.findMany({
+      where: { claimId: id },
+      orderBy: { uploadedAt: "desc" },
+    });
+
+    res.json({ evidence });
+  } catch (error: any) {
+    console.error("Get Evidence Error:", error);
+    res.status(500).json({ error: "SERVER_ERROR", message: "Failed to fetch evidence." });
+  }
+});
 
 export default router;

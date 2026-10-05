@@ -1,131 +1,145 @@
 import React, { useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { AlertBanner } from "../../components/AlertBanner";
 
 export const LoginPage: React.FC = () => {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { login } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError("Please enter both email and password.");
-      return;
-    }
+    setError(null);
+    setLoading(true);
 
     try {
-      setLoading(true);
-      setError(null);
-      const res = await login(email, password);
-
-      // Navigate based on authenticated role
-      const userRole = res.user.role;
-      if (userRole === "admin") {
-        navigate("/admin/dashboard");
-      } else if (userRole === "investigator") {
-        navigate("/investigator/dashboard");
-      } else {
-        navigate("/customer/dashboard");
-      }
+      await login(email, password);
+      navigate("/");
     } catch (err: any) {
-      setError(err.message || "Login failed. Please verify your credentials.");
+      setError(err.response?.data?.message || err.message || "Login failed. Check your credentials.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDemoLogin = async (demoEmail: string) => {
+    setEmail(demoEmail);
+    setPassword("password123");
+    setError(null);
+    setLoading(true);
+
+    try {
+      await login(demoEmail, "password123");
+      navigate("/");
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Demo login failed.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="auth-wrapper">
-      <div className="auth-card">
-        <div className="auth-header">
-          <div
-            style={{
-              width: "48px",
-              height: "48px",
-              margin: "0 auto 1rem",
-              background: "linear-gradient(135deg, #6366f1, #06b6d4)",
-              borderRadius: "12px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: "0 0 20px rgba(99, 102, 241, 0.4)",
-            }}
-          >
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-            </svg>
+    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
+        <Link to="/" className="inline-flex items-center gap-2 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 p-0.5">
+            <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
+              <svg className="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+            </div>
           </div>
-          <h2 style={{ fontSize: "1.6rem", fontWeight: 700, color: "#fff", letterSpacing: "-0.02em" }}>
-            Sign In to ClaimGuard AI
-          </h2>
-          <p style={{ color: "var(--text-secondary)", fontSize: "0.92rem", marginTop: "0.35rem" }}>
-            Amazon Cognito Authenticated Enterprise Portal
+          <span className="text-2xl font-bold tracking-tight text-white">CLAIMGUARD AI</span>
+        </Link>
+        <h2 className="text-xl font-semibold text-slate-200">Sign in to your portal</h2>
+      </div>
+
+      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="bg-slate-900/90 border border-slate-800 py-8 px-6 shadow-2xl rounded-2xl sm:px-10 space-y-6">
+          {error && (
+            <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-400 font-medium">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                Email Address
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                placeholder="name@claimguard.ai"
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700/80 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                placeholder="••••••••"
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700/80 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50"
+            >
+              {loading ? "Authenticating..." : "Sign In"}
+            </button>
+          </form>
+
+          {/* Quick Demo Credentials Selection */}
+          <div className="pt-4 border-t border-slate-800">
+            <p className="text-xs text-center font-semibold text-slate-400 uppercase tracking-wider mb-3">
+              Quick Demo Access (One-Click Login)
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => handleDemoLogin("customer@claimguard.ai")}
+                className="p-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-[11px] font-semibold text-blue-400 transition-colors text-center"
+              >
+                Customer
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDemoLogin("investigator@claimguard.ai")}
+                className="p-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded-lg text-[11px] font-semibold text-purple-400 transition-colors text-center"
+              >
+                Investigator
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDemoLogin("admin@claimguard.ai")}
+                className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg text-[11px] font-semibold text-emerald-400 transition-colors text-center"
+              >
+                Admin
+              </button>
+            </div>
+          </div>
+
+          <p className="text-center text-xs text-slate-400">
+            Don't have an account?{" "}
+            <Link to="/register" className="font-semibold text-indigo-400 hover:text-indigo-300">
+              Register here
+            </Link>
           </p>
-        </div>
-
-        {error && <AlertBanner type="error" message={error} onClose={() => setError(null)} />}
-
-        {location.state?.registered && (
-          <AlertBanner
-            type="success"
-            message="Registration verified successfully! Please log in with your credentials."
-          />
-        )}
-
-        <form onSubmit={handleLogin}>
-          <div className="form-group">
-            <label className="form-label">Email Address</label>
-            <input
-              type="email"
-              className="form-input"
-              placeholder="Email address"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Password</label>
-            <input
-              type="password"
-              className="form-input"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="btn btn-primary"
-            style={{ width: "100%", padding: "0.85rem", marginTop: "0.5rem" }}
-            disabled={loading}
-          >
-            {loading ? (
-              <>
-                <div className="spinner" style={{ width: 18, height: 18 }}></div>
-                Authenticating...
-              </>
-            ) : (
-              "Sign In with Cognito"
-            )}
-          </button>
-        </form>
-
-        <div style={{ marginTop: "1.5rem", textAlign: "center", fontSize: "0.88rem", color: "var(--text-secondary)" }}>
-          Don't have an account?{" "}
-          <Link to="/register" style={{ fontWeight: 600, color: "#818cf8" }}>
-            Register here
-          </Link>
         </div>
       </div>
     </div>

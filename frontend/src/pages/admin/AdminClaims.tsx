@@ -1,32 +1,28 @@
 import React, { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "../../components/DashboardLayout";
 import { SearchFilter } from "../../components/SearchFilter";
 import { ClaimTable } from "../../components/ClaimTable";
-import { claimService } from "../../services/claimService";
+import { adminService } from "../../services/adminService";
 import { Claim } from "../../types";
 
-export const InvestigatorClaimsList: React.FC = () => {
-  const [searchParams] = useSearchParams();
-  const initialRisk = searchParams.get("riskLevel") || "";
-
+export const AdminClaims: React.FC = () => {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [riskFilter, setRiskFilter] = useState(initialRisk);
+  const [riskFilter, setRiskFilter] = useState("");
 
   const fetchClaims = async () => {
     setLoading(true);
     try {
-      const { claims: data } = await claimService.getClaims({
+      const { claims: data } = await adminService.getClaims({
         search: searchQuery,
         status: statusFilter,
         riskLevel: riskFilter,
       });
       setClaims(data);
     } catch (err) {
-      console.error("Failed to fetch claims:", err);
+      console.error("Failed to load admin claims:", err);
     } finally {
       setLoading(false);
     }
@@ -38,8 +34,8 @@ export const InvestigatorClaimsList: React.FC = () => {
 
   return (
     <DashboardLayout
-      title="Investigation Claims Queue"
-      subtitle="Search, filter, and review submitted insurance claims for risk evaluation and fraud investigation."
+      title="System-Wide Claims Registry"
+      subtitle="Complete database of submitted claims, automated risk classifications, and investigation statuses."
     >
       <SearchFilter
         searchQuery={searchQuery}
@@ -50,7 +46,7 @@ export const InvestigatorClaimsList: React.FC = () => {
         onRiskChange={setRiskFilter}
       />
 
-      <ClaimTable claims={claims} userRole="investigator" loading={loading} />
+      <ClaimTable claims={claims} userRole="admin" loading={loading} />
     </DashboardLayout>
   );
 };

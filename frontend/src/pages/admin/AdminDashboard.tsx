@@ -1,281 +1,134 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { claimService } from "../../services/claimService";
-import { Claim, ClaimStatistics } from "../../types";
-import { MetricCard } from "../../components/MetricCard";
-import { StatusBadge } from "../../components/StatusBadge";
-import { RiskBadge } from "../../components/RiskBadge";
-import { EmptyState } from "../../components/EmptyState";
-import { AlertBanner } from "../../components/AlertBanner";
+import { DashboardLayout } from "../../components/DashboardLayout";
+import { StatCard } from "../../components/StatCard";
+import { ClaimTable } from "../../components/ClaimTable";
+import { adminService } from "../../services/adminService";
+import { AdminStatistics, Claim } from "../../types";
 
 export const AdminDashboard: React.FC = () => {
-  const [claims, setClaims] = useState<Claim[]>([]);
-  const [filteredClaims, setFilteredClaims] = useState<Claim[]>([]);
-  const [stats, setStats] = useState<ClaimStatistics | null>(null);
+  const [stats, setStats] = useState<AdminStatistics | null>(null);
+  const [recentClaims, setRecentClaims] = useState<Claim[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("ALL");
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [claimsData, statsData] = await Promise.all([
-        claimService.getClaims(),
-        claimService.getStatistics(),
-      ]);
-      setClaims(claimsData);
-      setFilteredClaims(claimsData);
-      setStats(statsData);
-    } catch (err: any) {
-      setError(err.message || "Failed to load admin console data.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    loadData();
+    const fetchAdminData = async () => {
+      try {
+        const [{ statistics }, { claims }] = await Promise.all([
+          adminService.getStatistics(),
+          adminService.getClaims(),
+        ]);
+        setStats(statistics);
+        setRecentClaims(claims.slice(0, 5));
+      } catch (err) {
+        console.error("Failed to load admin dashboard stats:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAdminData();
   }, []);
 
-  useEffect(() => {
-    let result = claims;
-
-    if (statusFilter !== "ALL") {
-      result = result.filter((c) => c.status === statusFilter);
-    }
-
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      result = result.filter(
-        (c) =>
-          c.claimId.toLowerCase().includes(q) ||
-          c.policyNumber.toLowerCase().includes(q) ||
-          (c.customerId || c.userId || "").toLowerCase().includes(q) ||
-          c.claimType.toLowerCase().includes(q)
-      );
-    }
-
-    setFilteredClaims(result);
-  }, [searchTerm, statusFilter, claims]);
-
   return (
-    <div className="main-content">
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: "1rem",
-          marginBottom: "2rem",
-        }}
-      >
-        <div>
-          <h1 style={{ fontSize: "1.85rem", fontWeight: 700, color: "#fff" }}>
-            Administrator Governance Console
-          </h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem" }}>
-            Platform Overview • Amazon DynamoDB & Cognito Identity Auditing
-          </p>
-        </div>
-
-        <button onClick={loadData} className="btn btn-secondary btn-sm" title="Refresh data">
-          ↻ Refresh Console
-        </button>
+    <DashboardLayout
+      title="Platform Administration & Executive Control"
+      subtitle="High-level oversight of claim volume, risk exposure, user roles, and platform health."
+    >
+      {/* Stat Cards Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard title="Total Platform Users" value={stats?.totalUsers || 0} color="indigo" />
+        <StatCard title="Total Claims Filed" value={stats?.totalClaims || 0} color="cyan" />
+        <StatCard title="Active Investigations" value={stats?.activeInvestigations || 0} color="amber" />
+        <StatCard title="High & Critical Risk" value={stats?.highRiskClaims || 0} color="rose" />
       </div>
 
-      {error && <AlertBanner type="error" message={error} onClose={() => setError(null)} />}
+      {/* Risk Distribution Visual Breakdown */}
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Claims Status Breakdown */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-4">
+            <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-3">
+              Claims Status Breakdown
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-400 block mb-1">Submitted</span>
+                <span className="text-xl font-bold text-blue-400">{stats.claimsByStatus.submitted}</span>
+              </div>
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-400 block mb-1">Under Investigation</span>
+                <span className="text-xl font-bold text-purple-400">{stats.claimsByStatus.underInvestigation}</span>
+              </div>
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-400 block mb-1">Approved Claims</span>
+                <span className="text-xl font-bold text-emerald-400">{stats.claimsByStatus.approved}</span>
+              </div>
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg">
+                <span className="text-slate-400 block mb-1">Rejected Claims</span>
+                <span className="text-xl font-bold text-rose-400">{stats.claimsByStatus.rejected}</span>
+              </div>
+            </div>
+          </div>
 
-      {/* Metrics */}
-      <div className="metrics-grid">
-        <MetricCard
-          label="Total System Claims"
-          value={stats ? stats.totalClaims : "—"}
-          subtitle="All platform records"
-          highlightColor="#6366f1"
-          icon={
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
-          }
-        />
-        <MetricCard
-          label="Requires Attention"
-          value={stats ? stats.requiresAttention : "—"}
-          subtitle="Flagged or escalated"
-          highlightColor="#ef4444"
-          icon={
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-          }
-        />
-        <MetricCard
-          label="Under Review"
-          value={stats ? stats.underInvestigation : "—"}
-          subtitle="In investigator queue"
-          highlightColor="#f59e0b"
-          icon={
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8"/>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-          }
-        />
-        <MetricCard
-          label="High Risk Claims"
-          value={stats ? stats.highRiskClaims : "—"}
-          subtitle="AI-designated high or critical risk"
-          highlightColor="#e11d48"
-          icon={
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
-          }
-        />
-      </div>
+          {/* Risk Level Distribution */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-4">
+            <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-3">
+              Automated Risk Level Distribution
+            </h3>
+            <div className="space-y-3 text-xs">
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span className="text-emerald-400">Low Risk</span>
+                  <span className="text-slate-300">{stats.riskDistribution.low} claims</span>
+                </div>
+                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-emerald-500 h-full rounded-full"
+                    style={{ width: `${stats.totalClaims ? (stats.riskDistribution.low / stats.totalClaims) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
 
-      {/* Filter and Search Bar */}
-      <div
-        className="card"
-        style={{
-          padding: "1.25rem",
-          marginBottom: "1.5rem",
-          display: "flex",
-          gap: "1rem",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ flex: 1, minWidth: "240px" }}>
-          <input
-            type="text"
-            className="form-input"
-            placeholder="Search by Claim ID, Policy Number, Customer ID, or Type..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span className="text-amber-400">Medium Risk</span>
+                  <span className="text-slate-300">{stats.riskDistribution.medium} claims</span>
+                </div>
+                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-amber-500 h-full rounded-full"
+                    style={{ width: `${stats.totalClaims ? (stats.riskDistribution.medium / stats.totalClaims) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
 
-        <div style={{ minWidth: "180px" }}>
-          <select
-            className="form-select"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="ALL">All Statuses</option>
-            <option value="SUBMITTED">Submitted</option>
-            <option value="PROCESSING">Processing</option>
-            <option value="AI_ANALYSIS">AI Analysis</option>
-            <option value="UNDER_INVESTIGATION">Under Investigation</option>
-            <option value="REVIEW">Review</option>
-            <option value="COMPLETED">Completed</option>
-            <option value="FAILED">Failed</option>
-          </select>
-        </div>
-      </div>
-
-      {/* All Claims Table */}
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h2 className="card-title">All Claims Database Records ({filteredClaims.length})</h2>
-            <p className="card-subtitle">Real-time scan of DynamoDB ClaimGuardClaims table</p>
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span className="text-rose-400">High & Critical Risk</span>
+                  <span className="text-slate-300">{stats.riskDistribution.high + stats.riskDistribution.critical} claims</span>
+                </div>
+                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-rose-500 h-full rounded-full"
+                    style={{ width: `${stats.totalClaims ? ((stats.riskDistribution.high + stats.riskDistribution.critical) / stats.totalClaims) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
+      )}
 
-        {loading ? (
-          <div style={{ textAlign: "center", padding: "4rem" }}>
-            <div className="spinner"></div>
-            <p style={{ marginTop: "1rem", color: "var(--text-secondary)" }}>
-              Scanning DynamoDB table...
-            </p>
-          </div>
-        ) : filteredClaims.length === 0 ? (
-          <EmptyState
-            title={claims.length === 0 ? "DynamoDB Table Empty" : "No matching claims found"}
-            description={
-              claims.length === 0
-                ? "There are currently zero claim records in the database."
-                : "Try adjusting your search criteria."
-            }
-          />
-        ) : (
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Claim ID</th>
-                  <th>Customer ID</th>
-                  <th>Policy Number</th>
-                  <th>Type</th>
-                  <th>Claimed Amount</th>
-                  <th>Risk Level</th>
-                  <th>Status</th>
-                  <th>Assigned Investigator</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredClaims.map((claim) => (
-                  <tr key={claim.claimId}>
-                    <td>
-                      <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "#fff" }}>
-                        {claim.claimId}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                        {claim.customerId || claim.userId}
-                      </span>
-                    </td>
-                    <td>{claim.policyNumber}</td>
-                    <td>{claim.claimType}</td>
-                    <td style={{ fontWeight: 600, color: "#67e8f9" }}>
-                      ₹{claim.claimedAmount.toLocaleString()}
-                    </td>
-                    <td>
-                      {claim.aiResult?.riskLevel ? (
-                        <RiskBadge level={claim.aiResult.riskLevel} />
-                      ) : (
-                        <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Pending</span>
-                      )}
-                    </td>
-                    <td>
-                      <StatusBadge status={claim.status} />
-                    </td>
-                    <td>
-                      {claim.investigatorId ? (
-                        <span style={{ color: "#a5b4fc", fontSize: "0.85rem" }}>
-                          {claim.investigatorName || claim.investigatorId}
-                        </span>
-                      ) : (
-                        <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                          Unassigned
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <Link
-                        to={`/admin/claims/${claim.claimId}`}
-                        className="btn btn-outline btn-sm"
-                      >
-                        Manage →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      {/* System-Wide Claims List */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-white">Recent System Claims</h2>
+          <Link to="/admin/claims" className="text-xs font-semibold text-indigo-400 hover:text-indigo-300">
+            View All System Claims →
+          </Link>
+        </div>
+        <ClaimTable claims={recentClaims} userRole="admin" loading={loading} />
       </div>
-    </div>
+    </DashboardLayout>
   );
 };

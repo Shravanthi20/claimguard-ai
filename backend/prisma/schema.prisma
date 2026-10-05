@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  INVESTIGATOR
+  ADMIN
+}
+
+enum ClaimStatus {
+  SUBMITTED
+  IN_REVIEW
+  UNDER_INVESTIGATION
+  APPROVED
+  REJECTED
+  ACTION_REQUIRED
+}
+
+enum InvestigationStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  APPROVED
+  REJECTED
+  MORE_INFO_REQUESTED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  email              String              @unique
+  passwordHash       String
+  name               String
+  role               Role                @default(CUSTOMER)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  policies           Policy[]
+  claims             Claim[]             @relation("CustomerClaims")
+  assignedClaims     Claim[]             @relation("InvestigatorClaims")
+  investigations     Investigation[]     @relation("InvestigatorAssigned")
+  investigationNotes InvestigationNote[]
+
+  @@map("users")
+}
+
+model Policy {
+  id             String   @id @default(uuid())
+  policyNumber   String   @unique
+  userId         String
+  policyType     String
+  status         String   @default("ACTIVE")
+  startDate      DateTime
+  endDate        DateTime
+  coverageAmount Float
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  claims         Claim[]
+
+  @@map("policies")
+}
+
+model Claim {
+  id               String            @id @default(uuid())
+  claimNumber      String            @unique
+  customerId       String
+  policyId         String?
+  claimType        String
+  incidentDate     DateTime
+  incidentLocation String
+  claimAmount      Float
+  description      String
+  status           ClaimStatus       @default(SUBMITTED)
+  investigatorId   String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  customer         User              @relation("CustomerClaims", fields: [customerId], references: [id], onDelete: Cascade)
+  investigator     User?             @relation("InvestigatorClaims", fields: [investigatorId], references: [id])
+  policy           Policy?           @relation(fields: [policyId], references: [id])
+  evidence         Evidence[]
+  investigation    Investigation?
+  riskAssessment   RiskAssessment?
+  claimEvents      ClaimEvent[]
+
+  @@map("claims")
+}
+
+model Evidence {
+  id          String   @id @default(uuid())
+  claimId     String
+  fileName    String
+  filePath    String
+  fileType    String
+  fileSize    Int
+  description String?
+  uploadedAt  DateTime @default(now())
+
+  claim       Claim    @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@map("evidence")
+}
+
+model Investigation {
+  id             String              @id @default(uuid())
+  claimId        String              @unique
+  investigatorId String?
+  status         InvestigationStatus @default(PENDING)
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  claim          Claim               @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  investigator   User?               @relation("InvestigatorAssigned", fields: [investigatorId], references: [id])
+  notes          InvestigationNote[]
+
+  @@map("investigations")
+}
+
+model InvestigationNote {
+  id              String        @id @default(uuid())
+  investigationId String
+  authorId        String
+  note            String
+  createdAt       DateTime      @default(now())
+
+  investigation   Investigation @relation(fields: [investigationId], references: [id], onDelete: Cascade)
+  author          User          @relation(fields: [authorId], references: [id])
+
+  @@map("investigation_notes")
+}
+
+model RiskAssessment {
+  id               String    @id @default(uuid())
+  claimId          String    @unique
+  riskScore        Float
+  fraudProbability Float
+  riskLevel        RiskLevel
+  priority         Priority
+  riskFactors      Json
+  modelVersion     String    @default("demo-rule-engine-v1.0")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  claim            Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@map("risk_assessments")
+}
+
+model ClaimEvent {
+  id          String   @id @default(uuid())
+  claimId     String
+  eventType   String
+  description String
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  claim       Claim    @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@map("claim_events")
+}

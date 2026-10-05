@@ -1,106 +1,48 @@
-import { apiRequest } from "./apiClient";
-import { Claim, ClaimStatistics, AIResult, EvidenceFile, InvestigationRemark } from "../types";
+import { apiClient } from "./apiClient";
+import { Claim } from "../types";
+
+export interface CreateClaimPayload {
+  policyNumber?: string;
+  claimType: string;
+  incidentDate: string;
+  incidentLocation: string;
+  claimAmount: number;
+  description: string;
+  files?: File[];
+}
 
 export const claimService = {
-  async getClaims(filters?: { status?: string; claimType?: string }): Promise<Claim[]> {
-    const params = new URLSearchParams();
-    if (filters?.status) params.append("status", filters.status);
-    if (filters?.claimType) params.append("claimType", filters.claimType);
-
-    const qs = params.toString() ? `?${params.toString()}` : "";
-    return apiRequest<Claim[]>(`/claims${qs}`);
-  },
-
-  async getClaim(claimId: string): Promise<Claim> {
-    return apiRequest<Claim>(`/claims/${claimId}`);
-  },
-
-  async getClaimWithAI(claimId: string): Promise<Claim> {
-    const claim = await this.getClaim(claimId);
-    const analysis = await this.getAIResult(claimId);
-    if (analysis.status === "AVAILABLE") {
-      return { ...claim, aiResult: analysis.data || null };
-    }
-    if (analysis.status === "FAILED") {
-      return { ...claim, aiResult: null, status: "FAILED" };
-    }
-    return { ...claim, aiResult: null };
-  },
-
-  async createClaim(data: {
-    policyNumber: string;
-    incidentDate: string;
-    claimType: string;
-    accidentDescription: string;
-    claimedAmount: number;
-  }): Promise<Claim> {
-    return apiRequest<Claim>("/claims", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  },
-
-  async updateClaimStatus(claimId: string, status: string): Promise<Claim> {
-    return apiRequest<Claim>(`/claims/${claimId}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    });
-  },
-
-  async getStatistics(): Promise<ClaimStatistics> {
-    return apiRequest<ClaimStatistics>("/claims/statistics");
-  },
-
-  async getAIResult(claimId: string): Promise<{
-    status: "AVAILABLE" | "PROCESSING" | "FAILED";
-    data?: AIResult;
-    message?: string;
-  }> {
-    return apiRequest<{
-      status: "AVAILABLE" | "PROCESSING" | "FAILED";
-      data?: AIResult;
-      message?: string;
-    }>(`/claims/${claimId}/ai-result`);
-  },
-
-  async uploadEvidence(
-    claimId: string,
-    file: File
-  ): Promise<{ evidence: EvidenceFile; claim: Claim }> {
+  async createClaim(payload: CreateClaimPayload): Promise<{ message: string; claim: Claim }> {
     const formData = new FormData();
-    formData.append("file", file);
+    if (payload.policyNumber) formData.append("policyNumber", payload.policyNumber);
+    formData.append("claimType", payload.claimType);
+    formData.append("incidentDate", payload.incidentDate);
+    formData.append("incidentLocation", payload.incidentLocation);
+    formData.append("claimAmount", payload.claimAmount.toString());
+    formData.append("description", payload.description);
 
-    return apiRequest<{ evidence: EvidenceFile; claim: Claim }>(
-      `/claims/${claimId}/evidence`,
-      {
-        method: "POST",
-        body: formData,
-      }
-    );
-  },
+    if (payload.files && payload.files.length > 0) {
+      payload.files.forEach((file) => formData.append("files", file));
+    }
 
-  async addInvestigatorRemark(
-    claimId: string,
-    remark: string
-  ): Promise<{ remark: InvestigationRemark; claim: Claim }> {
-    return apiRequest<{ remark: InvestigationRemark; claim: Claim }>(
-      `/claims/${claimId}/remarks`,
-      {
-        method: "POST",
-        body: JSON.stringify({ remark }),
-      }
-    );
-  },
-
-  async updateInvestigationStatus(
-    claimId: string,
-    investigationStatus: string,
-    investigatorId?: string
-  ): Promise<Claim> {
-    return apiRequest<Claim>(`/claims/${claimId}/investigation-status`, {
-      method: "PATCH",
-      body: JSON.stringify({ investigationStatus, investigatorId }),
+    const response = await apiClient.post<{ message: string; claim: Claim }>("/claims", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
     });
+    return response.data;
   },
 
+  async getClaims(params?: { status?: string; riskLevel?: string; search?: string; claimType?: string }): Promise<{ claims: Claim[]; count: number }> {
+    const response = await apiClient.get<{ claims: Claim[]; count: number }>("/claims", { params });
+    return response.data;
+  },
+
+  async getClaimById(id: string): Promise<{ claim: Claim }> {
+    const response = await apiClient.get<{ claim: Claim }>(`/claims/${id}`);
+    return response.data;
+  },
+
+  async updateClaim(id: string, data: { status?: string; investigatorId?: string; description?: string }): Promise<{ message: string; claim: Claim }> {
+    const response = await apiClient.put<{ message: string; claim: Claim }>(`/claims/${id}`, data);
+    return response.data;
+  },
 };

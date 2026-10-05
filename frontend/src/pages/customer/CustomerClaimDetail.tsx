@@ -1,251 +1,199 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { claimService } from "../../services/claimService";
-import { Claim } from "../../types";
+import { DashboardLayout } from "../../components/DashboardLayout";
 import { StatusBadge } from "../../components/StatusBadge";
-import { ClaimTimeline } from "../../components/ClaimTimeline";
-import { AIResultCard } from "../../components/AIResultCard";
-import { AlertBanner } from "../../components/AlertBanner";
-import { openEvidence } from "../../services/apiClient";
+import { Timeline } from "../../components/Timeline";
+import { claimService } from "../../services/claimService";
+import { evidenceService } from "../../services/evidenceService";
+import { Claim, Evidence } from "../../types";
+import { FileUpload } from "../../components/FileUpload";
 
 export const CustomerClaimDetail: React.FC = () => {
-  const { claimId } = useParams<{ claimId: string }>();
+  const { id } = useParams<{ id: string }>();
   const [claim, setClaim] = useState<Claim | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // New evidence upload state
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
 
-  const fetchClaim = async (showLoading = true) => {
-    if (!claimId) return;
+  const fetchClaimDetail = async () => {
+    if (!id) return;
+    setLoading(true);
     try {
-      if (showLoading) setLoading(true);
-      setError(null);
-      const data = await claimService.getClaimWithAI(claimId);
+      const { claim: data } = await claimService.getClaimById(id);
       setClaim(data);
-    } catch (err: any) {
-      setError(err.message || "Failed to load claim details.");
+    } catch (err) {
+      console.error("Failed to load claim detail:", err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchClaim();
-  }, [claimId]);
+    fetchClaimDetail();
+  }, [id]);
 
-  useEffect(() => {
-    if (!claimId || !claim || claim.aiResult || !["SUBMITTED", "PROCESSING", "AI_ANALYSIS"].includes(claim.status)) return;
-    const interval = window.setInterval(() => {
-      fetchClaim(false);
-    }, 5000);
-    return () => window.clearInterval(interval);
-  }, [claimId, claim?.status, claim?.aiResult]);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0 || !claimId) return;
-    const file = e.target.files[0];
+  const handleEvidenceUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id || uploadFiles.length === 0) return;
+    setUploading(true);
+    setUploadSuccess(false);
 
     try {
-      setUploading(true);
-      setUploadError(null);
-      await claimService.uploadEvidence(claimId, file);
-      // Refresh claim
-      await fetchClaim();
-    } catch (err: any) {
-      setUploadError(err.message || "Failed to upload file.");
+      await evidenceService.uploadEvidence(id, uploadFiles, "Customer uploaded additional evidence");
+      setUploadFiles([]);
+      setUploadSuccess(true);
+      await fetchClaimDetail();
+    } catch (err) {
+      console.error("Failed to upload evidence:", err);
     } finally {
       setUploading(false);
-      e.target.value = "";
     }
   };
 
+  const VITE_API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  const apiBase = VITE_API_URL.replace(/\/api$/, "");
+
   if (loading) {
     return (
-      <div className="main-content">
-        <div style={{ textAlign: "center", padding: "5rem 0" }}>
-          <div className="spinner"></div>
-          <p style={{ marginTop: "1rem", color: "var(--text-secondary)" }}>
-            Loading claim records from DynamoDB & S3...
-          </p>
+      <DashboardLayout>
+        <div className="py-12 text-center text-slate-400">
+          <div className="inline-block animate-spin w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full mb-3" />
+          <p>Loading claim details...</p>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
-  if (error || !claim) {
+  if (!claim) {
     return (
-      <div className="main-content">
-        <div className="card" style={{ maxWidth: 600, margin: "2rem auto", textAlign: "center" }}>
-          <h2 style={{ color: "#ef4444", marginBottom: "0.5rem" }}>Unable to View Claim</h2>
-          <p style={{ color: "var(--text-secondary)", marginBottom: "1.5rem" }}>
-            {error || "Claim record not found or you are not authorized to view it."}
-          </p>
-          <Link to="/customer/claims" className="btn btn-primary">
-            ← Return to My Claims
+      <DashboardLayout>
+        <div className="py-12 text-center text-slate-400 space-y-4">
+          <p className="text-lg font-semibold text-rose-400">Claim not found or access denied.</p>
+          <Link to="/customer/claims" className="text-xs font-semibold text-indigo-400 hover:text-indigo-300">
+            ← Return to Claims List
           </Link>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
-  const allEvidence = [...(claim.documents || []), ...(claim.images || [])];
-
   return (
-    <div className="main-content">
-      {/* Top Breadcrumb & Status */}
-      <div style={{ marginBottom: "1.5rem" }}>
-        <Link to="/customer/claims" style={{ fontSize: "0.88rem", color: "var(--text-secondary)", display: "inline-flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
-          ← Back to Claims
-        </Link>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-              <h1 style={{ fontSize: "1.85rem", fontWeight: 700, color: "#fff" }}>
-                Claim {claim.claimId}
-              </h1>
-              <StatusBadge status={claim.status} />
-            </div>
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", marginTop: "0.25rem" }}>
-              Policy: <strong>{claim.policyNumber}</strong> • Submitted on{" "}
-              {new Date(claim.createdAt).toLocaleDateString()}
-            </p>
-          </div>
+    <DashboardLayout
+      title={`Claim ${claim.claimNumber}`}
+      subtitle={`Submitted on ${new Date(claim.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`}
+      actions={<StatusBadge status={claim.status} size="lg" />}
+    >
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column: Details & Evidence */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Claim Summary */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-4">
+            <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-3">
+              Claim Overview
+            </h3>
 
-          <button onClick={() => fetchClaim()} className="btn btn-secondary btn-sm" title="Refresh claim state">
-            ↻ Check Status
-          </button>
-        </div>
-      </div>
-
-      {uploadError && <AlertBanner type="error" message={uploadError} onClose={() => setUploadError(null)} />}
-
-      {/* Asynchronous Pipeline Stepper */}
-      <ClaimTimeline currentStatus={claim.status} createdAt={claim.createdAt} updatedAt={claim.updatedAt} />
-
-      {/* AI Assessment Card (Customer-Friendly View) */}
-      <AIResultCard
-        aiResult={claim.aiResult}
-        status={claim.status}
-        isInvestigatorOrAdmin={false}
-      />
-
-      {/* Claim Information Card */}
-      <div className="card" style={{ marginBottom: "2rem" }}>
-        <div className="card-header">
-          <h3 className="card-title">Claim Information</h3>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1.25rem", marginBottom: "1.5rem" }}>
-          <div>
-            <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Policy Number</div>
-            <div style={{ fontSize: "1.05rem", fontWeight: 600, color: "#fff", marginTop: "0.2rem" }}>{claim.policyNumber}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Incident Date</div>
-            <div style={{ fontSize: "1.05rem", fontWeight: 600, color: "#fff", marginTop: "0.2rem" }}>{claim.incidentDate}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Claim Type</div>
-            <div style={{ fontSize: "1.05rem", fontWeight: 600, color: "#fff", marginTop: "0.2rem" }}>{claim.claimType}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Claimed Amount</div>
-            <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#67e8f9", marginTop: "0.2rem" }}>
-              ₹{claim.claimedAmount.toLocaleString()}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "1.25rem" }}>
-          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.4rem" }}>
-            Accident Description
-          </div>
-          <p style={{ color: "var(--text-primary)", fontSize: "0.95rem", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-            {claim.accidentDescription || claim.description}
-          </p>
-        </div>
-      </div>
-
-      {/* Uploaded Evidence Gallery & Additional Upload */}
-      <div className="card" style={{ marginBottom: "2rem" }}>
-        <div className="card-header">
-          <div>
-            <h3 className="card-title">Supporting Evidence & S3 Documents</h3>
-            <p className="card-subtitle">Encrypted files stored in Amazon S3 for Textract & Rekognition inspection</p>
-          </div>
-
-          <label className="btn btn-outline btn-sm" style={{ cursor: uploading ? "not-allowed" : "pointer" }}>
-            {uploading ? "Uploading..." : "+ Upload More Files"}
-            <input
-              type="file"
-              style={{ display: "none" }}
-              disabled={uploading}
-              onChange={handleFileUpload}
-            />
-          </label>
-        </div>
-
-        {allEvidence.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "2.5rem", color: "var(--text-muted)", border: "1px dashed var(--border-subtle)", borderRadius: "12px" }}>
-            No evidence files attached to this claim yet.
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-            {allEvidence.map((file) => (
-              <div
-                key={file.fileId || file.s3Key}
-                style={{
-                  background: "rgba(15, 23, 42, 0.75)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "12px",
-                  padding: "1rem",
-                  display: "flex",
-                  flexDirection: "column",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
-                    <span
-                      style={{
-                        fontSize: "0.7rem",
-                        padding: "0.15rem 0.45rem",
-                        borderRadius: "4px",
-                        background: file.category === "image" ? "rgba(6, 182, 212, 0.2)" : "rgba(99, 102, 241, 0.2)",
-                        color: file.category === "image" ? "#67e8f9" : "#a5b4fc",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {file.category.toUpperCase()}
-                    </span>
-                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                      {file.fileSize ? `${(file.fileSize / 1024).toFixed(0)} KB` : ""}
-                    </span>
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "#fff", wordBreak: "break-all" }}>
-                    {file.fileName}
-                  </div>
-                </div>
-
-                <div style={{ marginTop: "1rem", paddingTop: "0.75rem", borderTop: "1px solid var(--border-subtle)" }}>
-                  <button
-                    type="button"
-                    onClick={() => openEvidence(file.url || "").catch((err) => setUploadError(err.message))}
-                    className="btn btn-secondary btn-sm"
-                    style={{ width: "100%", textAlign: "center" }}
-                    disabled={!file.url}
-                  >
-                    View / Download →
-                  </button>
-                </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
+              <div>
+                <span className="text-slate-400 uppercase font-semibold block mb-1">Claim Type</span>
+                <span className="text-slate-200 font-medium">{claim.claimType}</span>
               </div>
-            ))}
+              <div>
+                <span className="text-slate-400 uppercase font-semibold block mb-1">Claim Amount</span>
+                <span className="text-emerald-400 font-mono font-bold text-base">
+                  ${claim.claimAmount.toLocaleString()}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 uppercase font-semibold block mb-1">Incident Date</span>
+                <span className="text-slate-200 font-medium">
+                  {new Date(claim.incidentDate).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="col-span-2 sm:col-span-3">
+                <span className="text-slate-400 uppercase font-semibold block mb-1">Incident Location</span>
+                <span className="text-slate-200 font-medium">{claim.incidentLocation}</span>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-800">
+              <span className="text-slate-400 text-xs uppercase font-semibold block mb-1">
+                Incident Description
+              </span>
+              <p className="text-xs text-slate-300 bg-slate-950/60 p-3 rounded-lg border border-slate-800 leading-relaxed">
+                {claim.description}
+              </p>
+            </div>
           </div>
-        )}
+
+          {/* Submitted Evidence */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-4">
+            <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-3">
+              Submitted Supporting Evidence ({claim.evidence?.length || 0})
+            </h3>
+
+            {claim.evidence && claim.evidence.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {claim.evidence.map((file: Evidence) => (
+                  <a
+                    key={file.id}
+                    href={`${apiBase}${file.filePath}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 p-3 bg-slate-950 border border-slate-800 rounded-xl hover:border-indigo-500/50 transition-colors group"
+                  >
+                    <div className="w-9 h-9 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 group-hover:scale-105 transition-transform flex-shrink-0">
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                      </svg>
+                    </div>
+                    <div className="overflow-hidden text-xs">
+                      <p className="font-semibold text-slate-200 truncate group-hover:text-indigo-400">
+                        {file.fileName}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {(file.fileSize / 1024 / 1024).toFixed(2)} MB • {new Date(file.uploadedAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 italic">No evidence files uploaded yet.</p>
+            )}
+
+            {/* Upload Additional Evidence Form */}
+            <form onSubmit={handleEvidenceUpload} className="pt-4 border-t border-slate-800 space-y-3">
+              <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                Upload Additional Documentation
+              </h4>
+              <FileUpload files={uploadFiles} onFilesChange={setUploadFiles} maxFiles={3} />
+              {uploadSuccess && (
+                <p className="text-xs text-emerald-400 font-medium">Evidence files uploaded successfully!</p>
+              )}
+              {uploadFiles.length > 0 && (
+                <button
+                  type="submit"
+                  disabled={uploading}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {uploading ? "Uploading..." : "Submit Uploaded Files"}
+                </button>
+              )}
+            </form>
+          </div>
+        </div>
+
+        {/* Right Column: Timeline & Progress */}
+        <div className="space-y-6">
+          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-4">
+            <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-3">
+              Investigation Progress
+            </h3>
+            <Timeline events={claim.claimEvents || []} />
+          </div>
+        </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 };

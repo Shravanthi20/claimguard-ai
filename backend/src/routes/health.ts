@@ -1,32 +1,27 @@
-import { Router } from "express";
-import {
-  AWS_REGION,
-  DYNAMODB_CLAIMS_TABLE,
-  isCognitoConfigured,
-  isLocalDataMode,
-  isS3Configured,
-} from "../config/aws";
+import { Router, Request, Response } from "express";
+import { prisma } from "../config/db";
 
 const router = Router();
 
-router.get("/", (_req, res) => {
-  res.json({
-    status: "ok",
-    service: "ClaimGuard AI backend",
-    version: "1.0.0",
-    environment: process.env.NODE_ENV || "development",
-    region: AWS_REGION,
-    integrations: {
-      cognito: isCognitoConfigured ? "configured" : "not-configured",
-      s3: isS3Configured ? "configured" : isLocalDataMode ? "local-only" : "not-configured",
-      dynamoDb: DYNAMODB_CLAIMS_TABLE
-        ? "configured"
-        : isLocalDataMode
-        ? "local-only"
-        : "not-configured",
-    },
-    timestamp: new Date().toISOString(),
-  });
+router.get("/", async (_req: Request, res: Response): Promise<void> => {
+  try {
+    // Ping database
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+      service: "ClaimGuard AI Backend API",
+      database: "connected",
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "unhealthy",
+      timestamp: new Date().toISOString(),
+      service: "ClaimGuard AI Backend API",
+      database: "disconnected",
+      error: (error as Error).message,
+    });
+  }
 });
 
 export default router;

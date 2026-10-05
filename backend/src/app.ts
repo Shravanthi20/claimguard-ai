@@ -1,26 +1,34 @@
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
+
 import healthRoutes from "./routes/health";
 import authRoutes from "./routes/auth";
 import claimRoutes from "./routes/claims";
-import investigatorRoutes from "./routes/investigator";
+import investigationRoutes from "./routes/investigations";
+import riskRoutes from "./routes/risk";
 import adminRoutes from "./routes/admin";
 
 dotenv.config();
 
 const app = express();
 
-// Security and middleware
+// Security and CORS middleware
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
-app.use(express.urlencoded({ extended: true, limit: "20mb" }));
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
-// Route registrations
+// Static directory for uploaded evidence files
+const uploadsPath = path.join(__dirname, "../uploads");
+app.use("/uploads", express.static(uploadsPath));
+
+// API Routes
 app.use("/api/health", healthRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/claims", claimRoutes);
-app.use("/api/investigator", investigatorRoutes);
+app.use("/api/investigations", investigationRoutes);
+app.use("/api", riskRoutes);
 app.use("/api/admin", adminRoutes);
 
 // Global 404 handler
@@ -38,8 +46,8 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   res.status(status).json({
     error: status === 413 ? "PAYLOAD_TOO_LARGE" : "INTERNAL_SERVER_ERROR",
     message: status === 413
-      ? "The uploaded file exceeds the 15 MB size limit."
-      : "An unexpected error occurred. Please try again later.",
+      ? "Uploaded file exceeds maximum size limit (20 MB)."
+      : err.message || "An unexpected error occurred. Please try again later.",
   });
 });
 
@@ -47,7 +55,7 @@ const PORT = process.env.PORT || 5000;
 
 if (process.env.NODE_ENV !== "test") {
   app.listen(PORT, () => {
-    console.log(`[ClaimGuard AI] Backend API server running on port ${PORT}`);
+    console.log(`[ClaimGuard AI] Express REST API server running on port ${PORT}`);
   });
 }
 
