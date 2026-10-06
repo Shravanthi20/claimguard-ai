@@ -24,6 +24,7 @@ For isolated local tests only, `LOCAL_DATA_MODE=true` enables an in-memory claim
 ## Frontend Configuration
 
 Create `frontend/.env` from `frontend/.env.example`. `VITE_API_BASE_URL` is the only frontend service URL setting; point it to the local `/api` server or the deployed API Gateway stage. Never place AWS credentials or the AI result token in this file.
+Also set `VITE_COGNITO_USER_POOL_ID` and `VITE_COGNITO_CLIENT_ID` to the same Cognito user pool and public app client configured for the backend. The app client must allow `USER_PASSWORD_AUTH` and must not have a client secret, because it is used by the browser. Public registration creates customer accounts; assign the `investigator` or `admin` Cognito groups separately.
 
 ## Run
 

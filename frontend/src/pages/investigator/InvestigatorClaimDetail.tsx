@@ -201,6 +201,38 @@ export const InvestigatorClaimDetail: React.FC = () => {
             </div>
           </div>
 
+          {/* AI Analysis Inspector */}
+          {claim.aiProcessingStatus && (
+            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                <h3 className="text-lg font-bold text-white">AI Analysis (AWS)</h3>
+                <span className={`px-2 py-1 rounded text-xs font-semibold ${claim.aiProcessingStatus === 'COMPLETED' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                  {claim.aiProcessingStatus}
+                </span>
+              </div>
+              
+              {claim.riskAssessment && (
+                <div className="space-y-2 text-sm text-slate-300">
+                   <p><strong className="text-white">Fraud Probability:</strong> {(claim.riskAssessment.fraudProbability * 100).toFixed(1)}%</p>
+                   <p><strong className="text-white">Model:</strong> {claim.riskAssessment.modelVersion}</p>
+                   <p><strong className="text-white">Notes:</strong> {(claim.riskAssessment.riskFactors as any)?.modelNote}</p>
+                </div>
+              )}
+              
+              {claim.evidence?.filter((e: any) => e.imageAnalysisResults).length > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-800">
+                  <h4 className="text-sm font-bold mb-2">Amazon Rekognition Signals</h4>
+                  {claim.evidence.filter((e: any) => e.imageAnalysisResults).map((e: any) => (
+                    <div key={e.id} className="text-xs text-slate-400 mb-2">
+                      <span className="text-blue-400">{e.fileName}</span>: 
+                      {e.imageAnalysisResults.map((res: any) => res.labels.map((l: any) => `${l.name} (${Math.round(l.confidence)}%)`).join(", ")).join(" | ")}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Evidence Inspector */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 space-y-4">
             <h3 className="text-lg font-bold text-white border-b border-slate-800 pb-3">

@@ -1,32 +1,33 @@
-import React from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider, useAuth } from "./context/AuthContext";
+import React, { Suspense, lazy } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./context/AuthContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
-// Public Pages
-import { LandingPage } from "./pages/LandingPage";
-import { LoginPage } from "./pages/auth/LoginPage";
-import { RegisterPage } from "./pages/auth/RegisterPage";
+const LandingPage = lazy(() => import("./pages/LandingPage").then((module) => ({ default: module.LandingPage })));
+const LoginPage = lazy(() => import("./pages/auth/LoginPage").then((module) => ({ default: module.LoginPage })));
+const RegisterPage = lazy(() => import("./pages/auth/RegisterPage").then((module) => ({ default: module.RegisterPage })));
 
-// Customer Pages
-import { CustomerDashboard } from "./pages/customer/CustomerDashboard";
-import { CustomerClaimsList } from "./pages/customer/CustomerClaimsList";
-import { CustomerNewClaim } from "./pages/customer/CustomerNewClaim";
-import { CustomerClaimDetail } from "./pages/customer/CustomerClaimDetail";
+const CustomerDashboard = lazy(() => import("./pages/customer/CustomerDashboard").then((module) => ({ default: module.CustomerDashboard })));
+const CustomerClaimsList = lazy(() => import("./pages/customer/CustomerClaimsList").then((module) => ({ default: module.CustomerClaimsList })));
+const CustomerNewClaim = lazy(() => import("./pages/customer/CustomerNewClaim").then((module) => ({ default: module.CustomerNewClaim })));
+const CustomerClaimDetail = lazy(() => import("./pages/customer/CustomerClaimDetail").then((module) => ({ default: module.CustomerClaimDetail })));
 
-// Investigator Pages
-import { InvestigatorDashboard } from "./pages/investigator/InvestigatorDashboard";
-import { InvestigatorClaimsList } from "./pages/investigator/InvestigatorClaimsList";
-import { InvestigatorClaimDetail } from "./pages/investigator/InvestigatorClaimDetail";
+const InvestigatorDashboard = lazy(() => import("./pages/investigator/InvestigatorDashboard").then((module) => ({ default: module.InvestigatorDashboard })));
+const InvestigatorClaimsList = lazy(() => import("./pages/investigator/InvestigatorClaimsList").then((module) => ({ default: module.InvestigatorClaimsList })));
+const InvestigatorClaimDetail = lazy(() => import("./pages/investigator/InvestigatorClaimDetail").then((module) => ({ default: module.InvestigatorClaimDetail })));
 
-// Admin Pages
-import { AdminDashboard } from "./pages/admin/AdminDashboard";
-import { AdminUsers } from "./pages/admin/AdminUsers";
-import { AdminClaims } from "./pages/admin/AdminClaims";
-import { AdminAnalytics } from "./pages/admin/AdminAnalytics";
+const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard").then((module) => ({ default: module.AdminDashboard })));
+const AdminUsers = lazy(() => import("./pages/admin/AdminUsers").then((module) => ({ default: module.AdminUsers })));
+const AdminClaims = lazy(() => import("./pages/admin/AdminClaims").then((module) => ({ default: module.AdminClaims })));
+const AdminAnalytics = lazy(() => import("./pages/admin/AdminAnalytics").then((module) => ({ default: module.AdminAnalytics })));
 
-// 404
-import { NotFoundPage } from "./pages/NotFoundPage";
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then((module) => ({ default: module.NotFoundPage })));
+
+const LoadingScreen: React.FC = () => (
+  <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">
+    <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+  </div>
+);
 
 export const AppContent: React.FC = () => {
   return (
@@ -140,7 +141,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppContent />
+        <Suspense fallback={<LoadingScreen />}>
+          <AppContent />
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

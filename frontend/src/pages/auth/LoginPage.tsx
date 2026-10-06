@@ -19,24 +19,8 @@ export const LoginPage: React.FC = () => {
     try {
       await login(email, password);
       navigate("/");
-    } catch (err: any) {
-      setError(err.response?.data?.message || err.message || "Login failed. Check your credentials.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDemoLogin = async (demoEmail: string) => {
-    setEmail(demoEmail);
-    setPassword("password123");
-    setError(null);
-    setLoading(true);
-
-    try {
-      await login(demoEmail, "password123");
-      navigate("/");
-    } catch (err: any) {
-      setError(err.response?.data?.message || err.message || "Demo login failed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -103,36 +87,6 @@ export const LoginPage: React.FC = () => {
               {loading ? "Authenticating..." : "Sign In"}
             </button>
           </form>
-
-          {/* Quick Demo Credentials Selection */}
-          <div className="pt-4 border-t border-slate-800">
-            <p className="text-xs text-center font-semibold text-slate-400 uppercase tracking-wider mb-3">
-              Quick Demo Access (One-Click Login)
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => handleDemoLogin("customer@claimguard.ai")}
-                className="p-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-[11px] font-semibold text-blue-400 transition-colors text-center"
-              >
-                Customer
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDemoLogin("investigator@claimguard.ai")}
-                className="p-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded-lg text-[11px] font-semibold text-purple-400 transition-colors text-center"
-              >
-                Investigator
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDemoLogin("admin@claimguard.ai")}
-                className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-lg text-[11px] font-semibold text-emerald-400 transition-colors text-center"
-              >
-                Admin
-              </button>
-            </div>
-          </div>
 
           <p className="text-center text-xs text-slate-400">
             Don't have an account?{" "}

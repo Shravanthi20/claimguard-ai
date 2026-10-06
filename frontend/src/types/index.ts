@@ -14,7 +14,7 @@ export interface Policy {
   policyNumber: string;
   userId: string;
   policyType: string;
-  status: string;
+  status: string; aiProcessingStatus?: string;
   startDate: string;
   endDate: string;
   coverageAmount: number;

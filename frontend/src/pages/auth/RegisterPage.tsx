@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { UserRole } from "../../types";
+import { authService } from "../../services/authService";
 
 export const RegisterPage: React.FC = () => {
   const { register } = useAuth();
@@ -10,7 +10,8 @@ export const RegisterPage: React.FC = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<UserRole>("CUSTOMER");
+  const [confirmationCode, setConfirmationCode] = useState("");
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,10 +21,28 @@ export const RegisterPage: React.FC = () => {
     setLoading(true);
 
     try {
-      await register({ name, email, password, role });
-      navigate("/");
-    } catch (err: any) {
-      setError(err.response?.data?.message || err.message || "Registration failed. Try a different email.");
+      const result = await register({ name, email, password });
+      if (result.requiresConfirmation) {
+        setAwaitingConfirmation(true);
+      } else {
+        navigate("/login");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registration failed. Try a different email.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      await authService.confirmRegistration(email, confirmationCode);
+      navigate("/login", { state: { email } });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Confirmation failed. Check the code and try again.");
     } finally {
       setLoading(false);
     }
@@ -53,6 +72,25 @@ export const RegisterPage: React.FC = () => {
             </div>
           )}
 
+          {awaitingConfirmation ? (
+            <form onSubmit={handleConfirm} className="space-y-4">
+              <p className="text-sm text-slate-300">
+                We sent a confirmation code to <strong className="text-white">{email}</strong>.
+              </p>
+              <input
+                type="text"
+                value={confirmationCode}
+                onChange={(e) => setConfirmationCode(e.target.value)}
+                required
+                autoComplete="one-time-code"
+                placeholder="Confirmation code"
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700/80 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+              <button type="submit" disabled={loading} className="w-full py-2.5 px-4 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg disabled:opacity-50">
+                {loading ? "Confirming..." : "Confirm Account"}
+              </button>
+            </form>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
@@ -96,21 +134,6 @@ export const RegisterPage: React.FC = () => {
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                Account Role
-              </label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700/80 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500"
-              >
-                <option value="CUSTOMER">Customer (Claimant)</option>
-                <option value="INVESTIGATOR">Investigator (Claims Adjuster)</option>
-                <option value="ADMIN">Administrator</option>
-              </select>
-            </div>
-
             <button
               type="submit"
               disabled={loading}
@@ -119,6 +142,7 @@ export const RegisterPage: React.FC = () => {
               {loading ? "Creating Account..." : "Create Account"}
             </button>
           </form>
+          )}
 
           <p className="text-center text-xs text-slate-400">
             Already have an account?{" "}

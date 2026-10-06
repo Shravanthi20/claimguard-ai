@@ -93,6 +93,7 @@ model Claim {
   description      String
   status           ClaimStatus       @default(SUBMITTED)
   investigatorId   String?
+  aiProcessingStatus String      @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -115,6 +116,7 @@ model Evidence {
   fileType    String
   fileSize    Int
   description String?
+  imageAnalysisResults Json?
   uploadedAt  DateTime @default(now())
 
   claim       Claim    @relation(fields: [claimId], references: [id], onDelete: Cascade)

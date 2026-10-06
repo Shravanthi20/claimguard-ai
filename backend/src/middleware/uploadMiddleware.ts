@@ -1,22 +1,22 @@
 import multer from "multer";
+import multerS3 from "multer-s3";
+import { S3Client } from "@aws-sdk/client-s3";
 import path from "path";
-import fs from "fs";
 
-const uploadDir = path.join(__dirname, "../../uploads");
+const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+const BUCKET_NAME = process.env.S3_BUCKET_NAME || "claimguard-evidence";
 
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDir);
+const storage = multerS3({
+  s3: s3,
+  bucket: BUCKET_NAME,
+  metadata: function (req: any, file: any, cb: any) {
+    cb(null, { fieldName: file.fieldname });
   },
-  filename: (_req, file, cb) => {
+  key: function (req: any, file: any, cb: any) {
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
-  },
+    cb(null, `claims/\${uniqueSuffix}/\${file.fieldname}-\${uniqueSuffix}\${ext}`);
+  }
 });
 
 export const upload = multer({

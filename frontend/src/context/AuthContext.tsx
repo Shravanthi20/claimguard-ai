@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { User, UserRole } from "../types";
-import { authService, RegisterPayload } from "../services/authService";
+import { User } from "../types";
+import { authService, RegisterPayload, RegisterResponse } from "../services/authService";
 
 interface AuthContextType {
   user: User | null;
@@ -9,7 +9,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (payload: RegisterPayload) => Promise<void>;
+  register: (payload: RegisterPayload) => Promise<RegisterResponse>;
   logout: () => void;
 }
 
@@ -30,11 +30,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const initAuth = async () => {
-      if (!token) {
-        setLoading(false);
-        return;
-      }
       try {
+        const sessionToken = token || (await authService.getCurrentSession());
+        if (!sessionToken) return;
+        if (!token) {
+          localStorage.setItem("claimguard_token", sessionToken);
+          setToken(sessionToken);
+        }
         const { user: fetchedUser } = await authService.getMe();
         setUser(fetchedUser);
       } catch (err) {
@@ -61,14 +63,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const register = async (payload: RegisterPayload) => {
+  const register = async (payload: RegisterPayload): Promise<RegisterResponse> => {
     setLoading(true);
     try {
-      const data = await authService.register(payload);
-      localStorage.setItem("claimguard_token", data.token);
-      localStorage.setItem("claimguard_user", JSON.stringify(data.user));
-      setToken(data.token);
-      setUser(data.user);
+      return await authService.register(payload);
     } finally {
       setLoading(false);
     }
@@ -77,6 +75,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     localStorage.removeItem("claimguard_token");
     localStorage.removeItem("claimguard_user");
+    authService.logout();
     setToken(null);
     setUser(null);
   };

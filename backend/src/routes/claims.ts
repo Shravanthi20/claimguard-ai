@@ -1,10 +1,74 @@
+import { EventBridgeClient, PutEventsCommand } from "@aws-sdk/client-eventbridge";
+import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { Router, Request, Response } from "express";
 import { prisma } from "../config/db";
 import { authenticateToken, requireRole } from "../middleware/authMiddleware";
 import { upload } from "../middleware/uploadMiddleware";
 import { calculateInitialRiskAssessment } from "../services/riskEngine";
 
+const ebClient = new EventBridgeClient({ region: process.env.AWS_REGION || "us-east-1" });
+const snsClient = new SNSClient({ region: process.env.AWS_REGION || "us-east-1" });
+const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN;
+
 const router = Router();
+
+// POST /api/claims/internal/webhook - Called by Lambda/Step Functions to update AI results
+router.post("/internal/webhook", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { claimId, aiProcessingStatus, riskScore, fraudProbability, riskLevel, riskFactors, imageAnalysisResults } = req.body;
+    
+    if (!claimId) {
+       res.status(400).json({ error: "Missing claimId" });
+       return;
+    }
+
+    await prisma.claim.update({
+      where: { id: claimId },
+      data: { aiProcessingStatus }
+    });
+
+    if (imageAnalysisResults && imageAnalysisResults.length > 0) {
+      // For simplicity, just update the first evidence record
+      const firstEvidence = await prisma.evidence.findFirst({ where: { claimId } });
+      if (firstEvidence) {
+        await prisma.evidence.update({
+          where: { id: firstEvidence.id },
+          data: { imageAnalysisResults }
+        });
+      }
+    }
+
+    if (riskScore !== undefined) {
+      await prisma.riskAssessment.update({
+        where: { claimId },
+        data: {
+          riskScore,
+          fraudProbability,
+          riskLevel,
+          riskFactors,
+          modelVersion: "sagemaker-demo-v1",
+        }
+      });
+      
+      if (SNS_TOPIC_ARN && aiProcessingStatus === "COMPLETED") {
+          try {
+              await snsClient.send(new PublishCommand({
+                  TopicArn: SNS_TOPIC_ARN,
+                  Subject: `Claim ${claimId} AI Processing Complete`,
+                  Message: `The AI Pipeline has finished evaluating claim ${claimId}. Risk Level: ${riskLevel}.`
+              }));
+          } catch (e) {
+              console.error("Failed to send SNS:", e);
+          }
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Webhook error:", err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
 
 // Helper to generate claim number
 function generateClaimNumber(): string {
@@ -111,7 +175,7 @@ router.post(
           data: files.map((file) => ({
             claimId: claim.id,
             fileName: file.originalname,
-            filePath: `/uploads/${file.filename}`,
+            filePath: (file as any).location || `/uploads/${file.filename}`,
             fileType: file.mimetype,
             fileSize: file.size,
             description: `Uploaded during claim submission`,
@@ -158,6 +222,27 @@ router.post(
           status: "PENDING",
         },
       });
+
+      // Publish event to EventBridge to trigger Step Functions / Rekognition
+      try {
+        await ebClient.send(new PutEventsCommand({
+          Entries: [{
+            Source: "claimguard.api",
+            DetailType: "ClaimSubmitted",
+            Detail: JSON.stringify({
+              claimId: claim.id,
+              claimNumber: claim.claimNumber,
+              evidence: files.map((f: any) => ({
+                key: f.key,
+                location: f.location
+              }))
+            }),
+            EventBusName: "default"
+          }]
+        }));
+      } catch (err) {
+        console.error("Failed to publish to EventBridge:", err);
+      }
 
       // Fetch complete created claim object to return
       const fullClaim = await prisma.claim.findUnique({
@@ -379,7 +464,7 @@ router.post(
             data: {
               claimId: id,
               fileName: file.originalname,
-              filePath: `/uploads/${file.filename}`,
+              filePath: (file as any).location || `/uploads/${file.filename}`,
               fileType: file.mimetype,
               fileSize: file.size,
               description: description || "Additional supporting evidence",

@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ClaimGuard AI Pipeline: SQS, Lambda, Step Functions, EventBridge'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+
+Resources:
+  # SQS Queue for Claims
+  ClaimProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub claimguard-processing-queue-${Environment}
+      VisibilityTimeout: 300
+
+  # EventBridge Rule
+  ClaimSubmittedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: default
+      EventPattern:
+        source:
+          - "claimguard.api"
+        detail-type:
+          - "ClaimSubmitted"
+      Targets:
+        - Arn: !GetAtt ClaimProcessingQueue.Arn
+          Id: "SQSTarget"
+
+  # SQS Policy to allow EventBridge
+  ClaimQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ClaimProcessingQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sqs:SendMessage"
+            Resource: !GetAtt ClaimProcessingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt ClaimSubmittedRule.Arn
+
+  # Step Functions State Machine (Mock/Skeleton for AI Workflow)
+  # Uses the default LabRole to pass permissions
+  ClaimAIWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub claimguard-ai-workflow-${Environment}
+      RoleArn: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+      DefinitionString: |-
+        {
+          "StartAt": "AnalyzeImages",
+          "States": {
+            "AnalyzeImages": {
+              "Type": "Pass",
+              "Result": "Rekognition Complete",
+              "Next": "PredictRisk"
+            },
+            "PredictRisk": {
+              "Type": "Pass",
+              "Result": "SageMaker Complete",
+              "Next": "UpdateClaim"
+            },
+            "UpdateClaim": {
+              "Type": "Pass",
+              "Result": "RDS Updated",
+              "Next": "NotifySNS"
+            },
+            "NotifySNS": {
+              "Type": "Pass",
+              "Result": "Notification Sent",
+              "End": true
+            }
+          }
+        }
+
+  # Lambda Function
+  ClaimProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub claimguard-processor-${Environment}
+      Handler: index.handler
+      Role: !Sub arn:aws:iam::${AWS::AccountId}:role/LabRole
+      Code:
+        ZipFile: |
+          // This should be replaced with the actual zip file upload
+          exports.handler = async (event) => { console.log(event); };
+      Runtime: nodejs20.x
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref ClaimAIWorkflow
+
+  # Lambda SQS Trigger
+  LambdaSQSEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ClaimProcessingQueue.Arn
+      FunctionName: !Ref ClaimProcessorLambda
+      BatchSize: 1
+
+  # SNS Topic for Notifications
+  ClaimNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub claimguard-notifications-${Environment}
+
+  # Glue Database for Athena Analytics
+  ClaimGuardAnalyticsDB:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub claimguard_analytics_${Environment}
+        Description: "Data Lake for ClaimGuard Athena queries"
+
+  # Athena WorkGroup
+  ClaimGuardAthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub claimguard-workgroup-${Environment}
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub s3://claimguard-analytics-datalake-${AWS::AccountId}/athena-results/
+
+Outputs:
+  QueueUrl:
+    Value: !Ref ClaimProcessingQueue
+  StateMachineArn:
+    Value: !Ref ClaimAIWorkflow
+  SNSTopicArn:
+    Value: !Ref ClaimNotificationTopic
+

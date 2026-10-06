@@ -157,17 +157,23 @@ router.get("/me", authenticateToken, async (req: Request, res: Response): Promis
       return;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        createdAt: true,
-        policies: true,
-      },
+    let user = await prisma.user.findFirst({
+      where: { email: req.user.email.toLowerCase() },
+      select: { id: true, email: true, name: true, role: true, createdAt: true, policies: true },
     });
+
+    // Sync Cognito User to Postgres
+    if (!user && process.env.COGNITO_USER_POOL_ID) {
+      const newUser = await prisma.user.create({
+        data: {
+          email: req.user.email.toLowerCase(),
+          name: req.user.name || req.user.email,
+          role: req.user.role as any,
+          passwordHash: "COGNITO_MANAGED",
+        }
+      });
+      user = { ...newUser, policies: [] } as any;
+    }
 
     if (!user) {
       res.status(444).json({ error: "USER_NOT_FOUND", message: "User account not found." });

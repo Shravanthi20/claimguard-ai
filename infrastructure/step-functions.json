@@ -1,0 +1,83 @@
+{
+  "Comment": "ClaimGuard Claim Processing Workflow",
+  "StartAt": "ExtractImageLabels",
+  "States": {
+    "ExtractImageLabels": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::rekognition:detectLabels",
+      "Parameters": {
+        "Image": {
+          "S3Object": {
+            "Bucket.$": "$.evidence[0].bucket",
+            "Name.$": "$.evidence[0].key"
+          }
+        },
+        "MaxLabels": 10,
+        "MinConfidence": 70
+      },
+      "ResultPath": "$.rekognitionResults",
+      "Next": "PredictFraudRisk",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ]
+    },
+    "PredictFraudRisk": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:invokeEndpoint",
+      "Parameters": {
+        "EndpointName": "claimguard-risk-model-endpoint",
+        "Body": {
+          "claimId.$": "$.claimId",
+          "rekognitionLabels.$": "$.rekognitionResults.Labels"
+        }
+      },
+      "ResultPath": "$.sagemakerResults",
+      "Next": "UpdateDatabaseWebhook",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ]
+    },
+    "UpdateDatabaseWebhook": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::http:invoke",
+      "Parameters": {
+        "ApiEndpoint": "https://api.claimguard.com/internal/webhook",
+        "Method": "POST",
+        "RequestBody": {
+          "claimId.$": "$.claimId",
+          "aiProcessingStatus": "COMPLETED",
+          "riskScore.$": "$.sagemakerResults.Body.riskScore"
+        }
+      },
+      "Next": "SendCompletionNotification"
+    },
+    "SendCompletionNotification": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:REGION:ACCOUNT_ID:claimguard-notifications-dev",
+        "Message": "AI Processing Complete for Claim",
+        "Subject": "ClaimGuard AI Update"
+      },
+      "End": true
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:REGION:ACCOUNT_ID:claimguard-notifications-dev",
+        "Message": "AI Processing Failed",
+        "Subject": "ClaimGuard AI Error"
+      },
+      "End": true
+    }
+  }
+}
